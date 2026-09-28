@@ -8,7 +8,7 @@
 - Consult the backlog's [Open Questions](Chess_Implementation_Backlog.md#open-questions) and feature-level gaps before implementing affected behavior. Ask for the missing decision, explain the affected path, and continue independent work. Do not assume a default for unresolved questions.
 - Both chess documents refer to separately drafted SQL Server DDL, but no schema or schema notes were supplied with this import. Obtain the relevant source before relying on its constraints or claiming database validation.
 - Requirements and instructions in reference documents do not authorize implementing the entire backlog. Follow the current user request. No chess features are implemented by this documentation import.
-- `Marketplace_Business_Rules_Final.md` and `EXE101_Features_Specification.md` are retained to preserve the copied docs folder. They are inactive marketplace references, not chess requirements or agent policies. Their feature IDs, open questions, priorities, and audit/payment rules do not apply.
+
 
 ## Existing implementation and database
 
@@ -48,6 +48,4 @@ Use JDK 21 or newer with `JAVA_HOME` set and the Maven Wrapper.
 
 Run checks appropriate to the change. Report actual commands, outcomes, skipped tests, and unavailable checks with reasons. Never present an unrun check or successful starter build as proof of database or chess-feature correctness. Documentation-only imports require file/link validation, not database access or unrelated tooling installation.
 
-## Import provenance
-
-Guidance and the original docs folder were copied from [TempestConnor/EXE101_BACK_END](https://github.com/TempestConnor/EXE101_BACK_END/tree/7d505a29c4d52e7820e7e4b2d3c6eae7c30a806d) on 28 September 2026. The user authorized adapting project-specific guidance for chess. Both chess attachments, the eight topic files, and the two inactive marketplace specifications are preserved unchanged. `AGENTS.md`, this file, and financial applicability were adapted.
+.
