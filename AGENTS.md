@@ -13,7 +13,26 @@ Read [repository guidance](docs/repository-guidance.md) for requirements, confli
 
 Target conventions: Java 25 · Spring Boot 4.x · Maven or Gradle · Spring Data JPA · Lombok · JUnit 6 + Mockito + AssertJ.
 
-Currently configured in [pom.xml](pom.xml): Java 21 target, Spring Boot 4.1.1, Maven Wrapper, Spring MVC, Jakarta Validation, and Boot test starters. SQL Server is the planned database; JPA, its driver, Lombok, and MapStruct are not configured yet. Compile against the configured Java version until the build is upgraded. Adopt inherited tooling conventions when required by an implementation task; this documentation import does not install them.
+Currently configured in [pom.xml](pom.xml): Java 21 target, Spring Boot 4.1.1, Maven Wrapper, Spring MVC, Jakarta Validation, Lombok, MapStruct, and Boot test starters. SQL Server is the planned database; JPA and its driver are not configured yet. Compile against the configured Java version until the build is upgraded.
+
+## Required Java/Spring skills
+
+Project skills are versioned in `.agents/skills/`; no personal installation is required.
+Before changing Spring Boot classes, read and apply
+[layered-architecture](.agents/skills/layered-architecture/SKILL.md).
+Read [project skill overrides and routing](docs/agent-skills.md), then load the
+additional skills matching the task. Always apply `testing-pyramid` when writing
+tests, `rest-api-conventions` for controllers/DTOs, `spring-data-jpa` for persistence,
+and `transactional-patterns` for database transaction boundaries.
+
+If native skill discovery is unavailable, read those `SKILL.md` files directly.
+Apply only relevant skills; availability does not authorize new features, dependencies,
+or architecture changes. Project overrides govern the generic examples in skills.
+Raise unresolved conflicts with repository requirements before affected changes.
+
+Run `./mvnw clean verify` (PowerShell: `.\mvnw.cmd clean verify`) for code/build
+changes. This includes formatting, architecture checks, and the test suite.
+Use `spotless:apply` to fix formatting. Report actual validation and any limitations.
 
 ## Feature package layout
 

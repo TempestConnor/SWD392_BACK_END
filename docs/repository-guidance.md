@@ -27,7 +27,7 @@ The eight topic files retain the source repository's Java/Spring conventions. Ap
 - For Lombok `@Builder(setterPrefix = "with")` targets, explicit builder mappings may be needed. `Mappers.getMapper(...)` is suitable only for standalone mappers without injected collaborators; otherwise use Spring or explicitly wired collaborators.
 - Incoming mappings must exclude server-controlled identifiers, participant assignments, authoritative clocks, ratings, outcomes, and historical fields as required by each operation. Follow the backlog's server UTC requirements for deadlines and clocks.
 - The controller checklist asks for a response local although its example returns a mapper call. Use `var response = taskMapper.toDto(created);` followed by `return response;` when mapping exists. The starter hello response needs no business service or mapper.
-- Spotless, Palantir formatting, and CI/hooks are not configured. The topic quality gate describes desired tooling, not an available or satisfied check. Report formatting validation as unavailable until configured; this documentation import does not install it.
+- Spotless with Palantir formatting is bound to Maven's `validate` phase. `clean verify` checks formatting and runs the tests, including selected ArchUnit package-boundary checks. GitHub Actions runs this command on pushes and pull requests. Local hooks are not installed. Remote required-check/branch-protection settings need administrator configuration; see [shared skills](agent-skills.md).
 - No OpenAPI contract, list envelope, `AppException`, `AppErrorMessage`, or `GlobalExceptionHandler` is established. Examples define conventions, not existing functionality. Preserve the hello response unless a task changes it. Default success codes do not replace appropriate error responses.
 - The [startup and endpoint test](../src/test/java/com/swd392/backend/Swd392BackendApplicationTests.java) uses MockMvc with a Spring context. The [processor integration test](../src/test/java/com/swd392/backend/tooling/AnnotationProcessingTest.java) verifies Lombok builders/getters, MapStruct round-trip mapping, and Spring bean registration without a database. No database mapping tests are present.
 - Never log passwords, tokens, connection secrets, or complete personal-data-bearing requests. BR-ACC-024 does not require a detailed administrative audit trail at launch; marketplace audit rules do not override it.
@@ -41,11 +41,10 @@ Use JDK 21 or newer with `JAVA_HOME` set and the Maven Wrapper.
 
 | Command | Purpose and limits |
 | --- | --- |
-| `.\mvnw.cmd clean verify` | Compile, run current tests, and package the JAR. Verifies startup, hello, and Lombok/MapStruct processor integration. |
+| `.\mvnw.cmd clean verify` | Check formatting, compile, run architecture/current tests, and package the JAR. Verifies startup, hello, and Lombok/MapStruct processor integration. |
+| `.\mvnw.cmd spotless:apply` | Apply Palantir Java formatting to source and test files. |
 | `.\mvnw.cmd test` | Run current tests; does not verify unimplemented chess behavior or database mappings. |
 | `.\mvnw.cmd spring-boot:run` | Start the application, normally on port 8080. |
 | `java -jar target/swd392-backend-0.0.1-SNAPSHOT.jar` | Run the packaged application after building. |
 
 Run checks appropriate to the change. Report actual commands, outcomes, skipped tests, and unavailable checks with reasons. Never present an unrun check or successful starter build as proof of database or chess-feature correctness. Documentation-only imports require file/link validation, not database access or unrelated tooling installation.
-
-.

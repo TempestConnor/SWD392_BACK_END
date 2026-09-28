@@ -1,14 +1,14 @@
 package com.swd392.backend.tooling;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertAll;
+
 import lombok.Builder;
 import lombok.Getter;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertAll;
 
 class AnnotationProcessingTest {
 
@@ -38,7 +38,7 @@ class AnnotationProcessingTest {
         private String name;
     }
 
-    public record SampleDto(String displayName) { }
+    public record SampleDto(String displayName) {}
 
     @Mapper(componentModel = "spring")
     public interface SampleMapper {
