@@ -15,7 +15,10 @@ import com.swd392.backend.rating.service.RatingService;
 import com.swd392.backend.security.model.AccessToken;
 import com.swd392.backend.security.service.TokenService;
 import java.nio.charset.StandardCharsets;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.NestedExceptionUtils;
@@ -87,6 +90,12 @@ public class AccountServiceImpl implements AccountService {
                 .orElseThrow(() -> new AppException(AppErrorMessage.CURRENT_ACCOUNT_NOT_FOUND));
 
         return toAccountWithRatings(entity);
+    }
+
+    @Override
+    public Map<Long, String> getDisplayNames(Collection<Long> accountIds) {
+        return accountRepository.findAllById(accountIds).stream()
+                .collect(Collectors.toMap(AccountEntity::getId, AccountEntity::getDisplayName));
     }
 
     private AccountEntity insertAccount(AccountEntity entity) {

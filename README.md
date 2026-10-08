@@ -69,9 +69,10 @@ Use `sh ./mvnw clean verify` on macOS / Linux.
 boundaries with ArchUnit, and the test suite. Fix formatting with
 `.\mvnw.cmd spotless:apply` (or `sh ./mvnw spotless:apply`).
 
-SQL Server integration tests (`AccountSqlServerIntegrationTest`) are skipped unless
-`CHESS_TEST_DB_URL`, `CHESS_TEST_DB_USERNAME` and `CHESS_TEST_DB_PASSWORD` point at a
-schema-only test database (`ChessDB_Test`) whose `RatingMode` table contains `CLASSICAL`.
+SQL Server integration tests (`AccountSqlServerIntegrationTest`, `InvitationSqlServerIntegrationTest`)
+are skipped unless `CHESS_TEST_DB_URL`, `CHESS_TEST_DB_USERNAME` and `CHESS_TEST_DB_PASSWORD` point at a
+schema-only test database (`ChessDB_Test`) whose `RatingMode` table contains `CLASSICAL` and which has
+every script in [db/migrations](db/README.md) applied (apply them to `ChessDB` too).
 They create and delete their own rows. Stockfish tests (`EngineServiceImplTest`,
 `CpuGameStockfishIntegrationTest`) run only when `STOCKFISH_PATH` is set. CI currently runs
 without either.

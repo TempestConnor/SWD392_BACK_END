@@ -4,6 +4,8 @@ import com.swd392.backend.account.model.Account;
 import com.swd392.backend.account.model.AccountRegistration;
 import com.swd392.backend.account.model.AuthenticatedAccount;
 import com.swd392.backend.account.model.Credentials;
+import java.util.Collection;
+import java.util.Map;
 
 public interface AccountService {
 
@@ -12,4 +14,6 @@ public interface AccountService {
     AuthenticatedAccount signIn(Credentials credentials);
 
     Account getCurrentAccount(Long accountId);
+
+    Map<Long, String> getDisplayNames(Collection<Long> accountIds);
 }
