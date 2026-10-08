@@ -12,6 +12,30 @@ The Maven Wrapper uses `JAVA_HOME` when it is set. Point it to the JDK you want 
 
 ## Run
 
+The application needs a SQL Server database with the chess schema (`ChessDB`) and a JWT signing secret.
+Set these environment variables before starting (never commit them):
+
+```powershell
+$env:CHESS_DB_URL = "jdbc:sqlserver://localhost:<port>;databaseName=ChessDB;encrypt=true;trustServerCertificate=true"
+$env:CHESS_DB_USERNAME = "<sql login>"
+$env:CHESS_DB_PASSWORD = "<password>"
+$env:JWT_SECRET = "<base64 key of at least 32 bytes>"
+```
+
+SQL Server Express usually listens on a dynamic TCP port; use the port shown in SQL Server
+Configuration Manager (or enable SQL Server Browser). Optional: `JWT_ACCESS_TOKEN_TTL` (ISO-8601, default `PT1H`).
+
+CPU games need the Stockfish engine (GPL-3, run as a separate process). Download the official
+build for your platform from https://github.com/official-stockfish/Stockfish/releases (verify the
+SHA-256 shown on the release page), keep it outside this repository, and point the backend at it:
+
+```powershell
+$env:STOCKFISH_PATH = "C:\path\to\stockfish-windows-x86-64-universal.exe"
+```
+
+Optional: `ENGINE_POOL_SIZE` (concurrent engine processes, default 2) and `ENGINE_ACQUIRE_TIMEOUT`
+(default `PT5S`). Without `STOCKFISH_PATH` the app still starts, but CPU-move requests return 503.
+
 Windows PowerShell:
 
 ```powershell
@@ -45,6 +69,13 @@ Use `sh ./mvnw clean verify` on macOS / Linux.
 boundaries with ArchUnit, and the test suite. Fix formatting with
 `.\mvnw.cmd spotless:apply` (or `sh ./mvnw spotless:apply`).
 
+SQL Server integration tests (`AccountSqlServerIntegrationTest`) are skipped unless
+`CHESS_TEST_DB_URL`, `CHESS_TEST_DB_USERNAME` and `CHESS_TEST_DB_PASSWORD` point at a
+schema-only test database (`ChessDB_Test`) whose `RatingMode` table contains `CLASSICAL`.
+They create and delete their own rows. Stockfish tests (`EngineServiceImplTest`,
+`CpuGameStockfishIntegrationTest`) run only when `STOCKFISH_PATH` is set. CI currently runs
+without either.
+
 ## Team agents and CI
 
 Java/Spring skills are included in `.agents/skills/` and routed by [AGENTS.md](AGENTS.md).
@@ -72,7 +103,7 @@ src/test/java/com/swd392/backend/ Automated tests
 
 Add business logic under `service/` and persistence under `repository/` as features are introduced. Controllers should handle HTTP concerns and delegate business operations to services.
 
-The starter includes Spring MVC, Jakarta Validation, and testing support. Database and authentication configuration can be added once the application's requirements are defined.
+Features follow the per-feature package layout in [AGENTS.md](AGENTS.md) (`account/`, `rating/`, …). Accounts authenticate with `POST /api/accounts/signin` and send `Authorization: Bearer <token>` on protected endpoints.
 
 ## Lombok and MapStruct
 

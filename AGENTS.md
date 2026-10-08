@@ -13,7 +13,7 @@ Read [repository guidance](docs/repository-guidance.md) for requirements, confli
 
 Target conventions: Java 25 · Spring Boot 4.x · Maven or Gradle · Spring Data JPA · Lombok · JUnit 6 + Mockito + AssertJ.
 
-Currently configured in [pom.xml](pom.xml): Java 21 target, Spring Boot 4.1.1, Maven Wrapper, Spring MVC, Jakarta Validation, Lombok, MapStruct, and Boot test starters. SQL Server is the planned database; JPA and its driver are not configured yet. Compile against the configured Java version until the build is upgraded.
+Currently configured in [pom.xml](pom.xml): Java 21 target, Spring Boot 4.1.1, Maven Wrapper, Spring MVC, Jakarta Validation, Spring Data JPA with the SQL Server driver, Spring Security with OAuth2 resource-server JWT (HS256), the `chessgame` rules library (Stockfish runs as an external process), Lombok, MapStruct, and Boot test starters. Hibernate validates (never generates) the existing SQL Server schema. Compile against the configured Java version until the build is upgraded.
 
 ## Required Java/Spring skills
 
@@ -53,7 +53,7 @@ com/swd392/backend/<feature>/
 
 Not every feature needs every file — a read-only feature has no `Create<Feature>DTO`. Add a layer only when it actually carries weight.
 
-Apply this layout to new features. The hello endpoint and DTO remain in their starter packages unless a task includes moving them. No generated entities exist yet.
+Apply this layout to new features. The hello endpoint and DTO remain in their starter packages unless a task includes moving them. `account` and `rating` (F01) follow this layout; shared error handling lives in `common/exception`, security wiring in `config`, and token issuing in `security`.
 
 ## Gotchas
 
@@ -63,6 +63,8 @@ Apply this layout to new features. The hello endpoint and DTO remain in their st
 - **No `final` on method parameters or local variables, anywhere.** Production code, controllers and tests all agree on this; `final` survives only on Lombok constructor-injected fields, because `@RequiredArgsConstructor` needs it.
 - `var` in controllers and tests; explicit types in services and mappers.
 - No existence checks or business logic in controllers — that belongs in the service, which should throw when something isn't there.
-- `@Transactional` at class level, service classes only (`readOnly = true` for read paths). No database mapping test exists yet.
+- `@Transactional` at class level, service classes only (`readOnly = true` for read paths).
+- SQL Server integration tests run only when `CHESS_TEST_DB_URL` (plus `_USERNAME`/`_PASSWORD`) is set; otherwise they are skipped and the app context starts without a database.
+- Chess rules and move search are imported, never hand-written: use `ChessRulesService` (wraps the `chessgame` library) and `EngineService` (Stockfish over UCI) from the `chess` package. Stockfish tests run only when `STOCKFISH_PATH` is set.
 
 Structure follows the [Java/Spring Boot AGENTS.md guide](https://josealopez.dev/en/blog/agents-md-java-spring-boot); topic files apply it to this repository.
