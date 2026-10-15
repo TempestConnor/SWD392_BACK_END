@@ -204,7 +204,7 @@ spring:
     job:
       enabled: false           # don't run jobs on app startup; we trigger them ourselves
     jdbc:
-      initialize-schema: never # (batch-jdbc starter) manage BATCH_* tables with Flyway in prod
+      initialize-schema: never # (batch-jdbc starter) manage BATCH_* tables with migration scripts in prod
 ```
 
 ```java
@@ -237,10 +237,10 @@ thread only if you accept the block.
 With the JDBC repository, Spring Batch needs its `BATCH_JOB_INSTANCE`, `BATCH_JOB_EXECUTION`,
 `BATCH_STEP_EXECUTION`, … tables. `initialize-schema: always` is fine for dev/embedded DBs but
 **don't let Batch DDL your production database on startup**. Set `initialize-schema: never` and
-ship the schema as a versioned [[flyway-migrations]] migration (the canonical DDL lives in
+ship the schema as a versioned migration script (the canonical DDL lives in
 `org/springframework/batch/core/schema-*.sql` inside `spring-batch-core`). Upgrading an existing
 Boot 3 database? Batch 6 renamed the `BATCH_JOB_SEQ` sequence to `BATCH_JOB_INSTANCE_SEQ` — the
-project ships migration scripts; add one to your Flyway history.
+project ships migration scripts; apply the matching one as a new script.
 
 ## Listeners — work that must run after the job, not per chunk
 
@@ -275,7 +275,7 @@ For durable background jobs with retry, a job queue is a better fit. Match the t
 - Agent injects `JobLauncher` or `JobExplorer` — consolidated into `JobOperator` in Batch 6; inject `JobOperator` and call `start(job, params)`
 - Agent calls `jobOperator.start("jobName", properties)` — deprecated for removal; use `start(Job, JobParameters)`
 - Agent writes manual config `@EnableBatchProcessing(dataSourceRef = ...)` — split in Batch 6: `@EnableBatchProcessing(taskExecutorRef = ...)` + `@EnableJdbcJobRepository(dataSourceRef = ...)`
-- Agent reuses a Boot 3 Flyway baseline for `BATCH_*` — Batch 6 renamed `BATCH_JOB_SEQ` to `BATCH_JOB_INSTANCE_SEQ`; add the migration script
+- Agent reuses a Boot 3 schema baseline for `BATCH_*` — Batch 6 renamed `BATCH_JOB_SEQ` to `BATCH_JOB_INSTANCE_SEQ`; add the migration script
 - Agent writes `write(List<? extends T> items)` — the signature is `write(Chunk<? extends T> chunk)` since Batch 5
 - Agent expects batch metrics to just appear — Batch 6 dropped Micrometer's global static registry; declare an `ObservationRegistry` bean wired to your `MeterRegistry`
 - Agent re-runs a job with identical parameters and hits `JobInstanceAlreadyCompleteException` — add `RunIdIncrementer` or a unique identifying param
@@ -287,4 +287,4 @@ For durable background jobs with retry, a job queue is a better fit. Match the t
 - Agent sends email / publishes events from the `ItemWriter` — runs inside the chunk TX; do it in an `afterJob` listener
 - Agent forgets `@StepScope` on a reader that reads `jobParameters` — `@Value("#{jobParameters[...]}")` only binds in step scope
 - Agent leaves jobs running on startup in a web app — set `spring.batch.job.enabled=false` and launch explicitly
-- Agent lets `initialize-schema: always` DDL the prod DB — use `never` + a Flyway migration for the `BATCH_*` tables
+- Agent lets `initialize-schema: always` DDL the prod DB — use `never` + a migration script for the `BATCH_*` tables

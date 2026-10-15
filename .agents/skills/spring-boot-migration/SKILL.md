@@ -29,7 +29,7 @@ Migrate from the latest Boot 3.5 release and keep business changes outside the u
 Boot 4 splits infrastructure into focused modules and starters.
 
 - Replace `spring-boot-starter-web` with `spring-boot-starter-webmvc`.
-- Use dedicated technology starters such as `spring-boot-starter-flyway`.
+- Use dedicated technology starters such as `spring-boot-starter-liquibase`.
 - Use technology-specific test starters; they bring the core test starter transitively.
 - Use `spring-boot-starter-security-test` for Spring Security test support.
 - Use `spring-boot-starter-batch-jdbc` when jobs require persistent metadata and restartability.

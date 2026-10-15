@@ -1,7 +1,7 @@
 // Copy-paste starting point for triggering a Spring Batch job on a schedule (Batch 6 / Boot 4).
 // Pair with application.yml:
 //   spring.batch.job.enabled: false      # don't auto-run jobs on startup
-//   spring.batch.jdbc.initialize-schema: never   # (batch-jdbc starter) manage BATCH_* tables via Flyway
+//   spring.batch.jdbc.initialize-schema: never   # (batch-jdbc starter) manage BATCH_* tables via migration scripts
 //
 // Batch 6: JobLauncher and JobExplorer are consolidated into JobOperator — inject that.
 // The default JobOperator is SYNCHRONOUS — start(...) blocks until the job finishes.

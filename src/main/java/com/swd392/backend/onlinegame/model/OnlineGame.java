@@ -1,6 +1,7 @@
 package com.swd392.backend.onlinegame.model;
 
 import com.swd392.backend.chess.model.ChessColor;
+import com.swd392.backend.chess.model.GameResult;
 import java.time.Instant;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -34,9 +35,14 @@ public class OnlineGame {
     private Instant startedAt;
     private Instant endedAt;
     private OnlineGameStatus status;
+    private GameResult outcome;
+    private TerminationReason terminationReason;
     private String initialFen;
     private String currentFen;
     private int lastPly;
     private Long whiteRemainingMs;
     private Long blackRemainingMs;
+    private Instant turnStartedAt;
+    private Instant whiteLastSeenAt;
+    private Instant blackLastSeenAt;
 }

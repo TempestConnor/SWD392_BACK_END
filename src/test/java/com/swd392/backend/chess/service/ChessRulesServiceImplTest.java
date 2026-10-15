@@ -167,4 +167,47 @@ class ChessRulesServiceImplTest {
                 .extracting("errorMessage")
                 .isEqualTo(AppErrorMessage.ILLEGAL_MOVE_SEQUENCE);
     }
+
+    @Test
+    void play_legal_move_returns_resulting_position_and_san_ok() {
+        // when
+        var position = chessRulesService.play(List.of("e2e4"), "e7e5");
+
+        // then
+        assertAll(
+                () -> assertThat(position.getFen())
+                        .isEqualTo("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2"),
+                () -> assertThat(position.getPly()).isEqualTo(2),
+                () -> assertThat(position.getLastMoveSan()).isEqualTo("e5"),
+                () -> assertThat(position.getStatus()).isEqualTo(GameStatus.ACTIVE));
+    }
+
+    @Test
+    void play_checkmating_move_is_checkmate_ok() {
+        // when
+        var position = chessRulesService.play(FOOLS_MATE.subList(0, 3), "d8h4");
+
+        // then
+        assertAll(
+                () -> assertThat(position.getStatus()).isEqualTo(GameStatus.CHECKMATE),
+                () -> assertThat(position.getResult()).isEqualTo(GameResult.BLACK_WIN));
+    }
+
+    @Test
+    void play_illegal_move_ko() {
+        // when / then
+        assertThatThrownBy(() -> chessRulesService.play(List.of("e2e4"), "e5e4"))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ILLEGAL_MOVE);
+    }
+
+    @Test
+    void play_move_after_checkmate_ko() {
+        // when / then
+        assertThatThrownBy(() -> chessRulesService.play(FOOLS_MATE, "a2a3"))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ILLEGAL_MOVE);
+    }
 }

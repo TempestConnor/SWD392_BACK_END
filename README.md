@@ -23,7 +23,10 @@ $env:JWT_SECRET = "<base64 key of at least 32 bytes>"
 ```
 
 SQL Server Express usually listens on a dynamic TCP port; use the port shown in SQL Server
-Configuration Manager (or enable SQL Server Browser). Optional: `JWT_ACCESS_TOKEN_TTL` (ISO-8601, default `PT1H`).
+Configuration Manager (or enable SQL Server Browser). Optional: `JWT_ACCESS_TOKEN_TTL` (ISO-8601, default `PT1H`),
+`PENDING_HEARTBEAT_TIMEOUT` (silence that cancels a game before start, default `PT30S`) and
+`ONLINE_GAME_SWEEP_INTERVAL` (how often stale pending games are cancelled and timed-out active games are
+completed, default `PT5S`).
 
 CPU games need the Stockfish engine (GPL-3, run as a separate process). Download the official
 build for your platform from https://github.com/official-stockfish/Stockfish/releases (verify the
@@ -69,7 +72,8 @@ Use `sh ./mvnw clean verify` on macOS / Linux.
 boundaries with ArchUnit, and the test suite. Fix formatting with
 `.\mvnw.cmd spotless:apply` (or `sh ./mvnw spotless:apply`).
 
-SQL Server integration tests (`AccountSqlServerIntegrationTest`, `InvitationSqlServerIntegrationTest`)
+SQL Server integration tests (`AccountSqlServerIntegrationTest`, `InvitationSqlServerIntegrationTest`,
+`OnlineGameReadySqlServerIntegrationTest`, `OnlineGameMoveSqlServerIntegrationTest`)
 are skipped unless `CHESS_TEST_DB_URL`, `CHESS_TEST_DB_USERNAME` and `CHESS_TEST_DB_PASSWORD` point at a
 schema-only test database (`ChessDB_Test`) whose `RatingMode` table contains `CLASSICAL` and which has
 every script in [db/migrations](db/README.md) applied (apply them to `ChessDB` too).

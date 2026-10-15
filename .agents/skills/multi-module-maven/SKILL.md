@@ -187,8 +187,6 @@ package `org.springframework.boot.<technology>`). Pick one starter per technolog
   OAuth2 starters gained the `security-` prefix); `spring-boot-starter-data-jpa` keeps its name
 - Starters follow `spring-boot-starter-<technology>`; test starters follow
   `spring-boot-starter-<technology>-test` (no plain `spring-boot-starter-test` needed alongside them)
-- Flyway/Liquibase no longer arrive transitively — add `spring-boot-starter-flyway` /
-  `spring-boot-starter-liquibase` in the module that owns migrations (usually `infrastructure`)
 - AOP starter is `spring-boot-starter-aspectj` (renamed from `spring-boot-starter-aop`)
 - WAR deploys to external Tomcat use `spring-boot-starter-tomcat-runtime`
 - `spring-boot-starter-classic` / `spring-boot-starter-test-classic` bundle the old monolithic
@@ -204,7 +202,7 @@ package `org.springframework.boot.<technology>`). Pick one starter per technolog
 - Agent uses `${project.version}` for inter-module versions — correct, but update parent version to update all
 - Agent adds `spring-boot-starter-web` — renamed `spring-boot-starter-webmvc` in Boot 4
 - Agent adds `spring-boot-starter-aop` — renamed `spring-boot-starter-aspectj` in Boot 4
-- Agent adds bare `flyway-core`/`liquibase-core` expecting Boot to configure them — use `spring-boot-starter-flyway` / `spring-boot-starter-liquibase`
+- Agent adds bare `liquibase-core` expecting Boot to configure it — use `spring-boot-starter-liquibase`
 - Agent adds `spring-boot-starter-test` next to `spring-boot-starter-webmvc-test` — the `-test` starters are self-contained in Boot 4
 - Agent reaches into auto-configuration classes from shared modules — their members are no longer public API in Boot 4
 - Agent overrides Boot-managed dependency versions without a compatibility reason - prefer the Boot BOM defaults

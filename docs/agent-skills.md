@@ -1,6 +1,6 @@
 # Shared Java/Spring skills
 
-The 33 Java/Spring skill folders in `.agents/skills/` are a versioned snapshot of
+The 32 Java/Spring skill folders in `.agents/skills/` are a versioned snapshot of
 the team's installed skills, including their examples, templates, and metadata.
 They travel with a normal clone or pull; no personal installation is needed.
 Codex discovers this directory automatically. Other agents must support repository
@@ -55,7 +55,7 @@ Read only the skills relevant to the requested change. Every name below maps to
 | Exception mapping | `problem-details-rfc9457` |
 | JPA entities, queries, repositories | `spring-data-jpa` |
 | Transactions and commit behavior | `transactional-patterns` |
-| Schema migrations | `flyway-migrations` |
+| Schema migrations | Idempotent SQL scripts in `db/migrations` ([db/README.md](../db/README.md)) |
 | Retried commands and duplicate effects | `idempotency-patterns` |
 | Grouped configuration | `configuration-properties` |
 | First-party JWT / external issuer JWT | `spring-security-jwt` / `oauth2-resource-server` |

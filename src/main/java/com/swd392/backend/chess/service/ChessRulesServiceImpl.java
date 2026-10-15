@@ -23,28 +23,42 @@ public class ChessRulesServiceImpl implements ChessRulesService {
 
     @Override
     public ChessPosition replay(List<String> uciMoves) {
-        ChessGame game = new ChessGame();
-        for (String move : uciMoves) {
-            boolean gameOver = game.getGameResult() != null;
-            if (gameOver) {
-                throw new AppException(AppErrorMessage.ILLEGAL_MOVE_SEQUENCE);
-            }
-            playMove(game, move);
-        }
+        ChessGame game = replayGame(uciMoves);
 
         return toPosition(game);
     }
 
-    private void playMove(ChessGame game, String uciMove) {
+    @Override
+    public ChessPosition play(List<String> playedMoves, String uciMove) {
+        ChessGame game = replayGame(playedMoves);
+        playMove(game, uciMove, AppErrorMessage.ILLEGAL_MOVE);
+
+        return toPosition(game);
+    }
+
+    private ChessGame replayGame(List<String> uciMoves) {
+        ChessGame game = new ChessGame();
+        for (String move : uciMoves) {
+            playMove(game, move, AppErrorMessage.ILLEGAL_MOVE_SEQUENCE);
+        }
+
+        return game;
+    }
+
+    private void playMove(ChessGame game, String uciMove, AppErrorMessage illegalMoveError) {
+        boolean gameOver = game.getGameResult() != null;
+        if (gameOver) {
+            throw new AppException(illegalMoveError);
+        }
         Move move;
         try {
             move = game.getMove(NotationType.UCI, uciMove);
         } catch (IllegalMoveException | IllegalArgumentException exception) {
-            throw new AppException(AppErrorMessage.ILLEGAL_MOVE_SEQUENCE, exception);
+            throw new AppException(illegalMoveError, exception);
         }
         boolean illegal = move == null || !game.isLegalMove(move);
         if (illegal) {
-            throw new AppException(AppErrorMessage.ILLEGAL_MOVE_SEQUENCE);
+            throw new AppException(illegalMoveError);
         }
         game.playMove(move);
     }

@@ -16,8 +16,12 @@ public record OnlineGameDTO(
         Instant createdAt,
         Instant readyDeadlineAt,
         Instant startedAt,
+        Instant endedAt,
+        String outcome,
+        String terminationReason,
         String initialFen,
         String currentFen,
         int lastPly,
         Long whiteRemainingMs,
-        Long blackRemainingMs) {}
+        Long blackRemainingMs,
+        Instant turnStartedAt) {}

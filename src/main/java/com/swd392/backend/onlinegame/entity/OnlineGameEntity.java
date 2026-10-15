@@ -75,6 +75,12 @@ public class OnlineGameEntity {
     @Column(name = "status", nullable = false, length = 12)
     private String status;
 
+    @Column(name = "outcome", length = 12)
+    private String outcome;
+
+    @Column(name = "termination_reason", length = 24)
+    private String terminationReason;
+
     @Column(name = "initial_fen", nullable = false, length = 120, updatable = false)
     private String initialFen;
 
@@ -89,4 +95,13 @@ public class OnlineGameEntity {
 
     @Column(name = "black_remaining_ms")
     private Long blackRemainingMs;
+
+    @Column(name = "turn_started_at")
+    private Instant turnStartedAt;
+
+    @Column(name = "white_last_seen_at")
+    private Instant whiteLastSeenAt;
+
+    @Column(name = "black_last_seen_at")
+    private Instant blackLastSeenAt;
 }

@@ -6,4 +6,6 @@ import java.util.List;
 public interface ChessRulesService {
 
     ChessPosition replay(List<String> uciMoves);
+
+    ChessPosition play(List<String> playedMoves, String uciMove);
 }

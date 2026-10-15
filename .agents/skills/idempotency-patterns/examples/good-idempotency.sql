@@ -11,7 +11,7 @@ CREATE TABLE request_results (
     CHECK (response_status IS NULL OR response_status BETWEEN 200 AND 599)
 );
 
--- JDBC named-parameter statement, not a Flyway migration:
+-- JDBC named-parameter statement, not a migration script:
 -- INSERT INTO request_results (tenant_id, operation, idempotency_key, request_hash)
 -- VALUES (:tenant, :operation, :key, :hash)
 -- ON CONFLICT (tenant_id, operation, idempotency_key) DO NOTHING
