@@ -34,7 +34,9 @@ public class SecurityConfig {
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final int MIN_SECRET_BYTES = 32;
     private static final int BCRYPT_STRENGTH = 12;
-    private static final String[] PUBLIC_GET_PATHS = {"/api/hello"};
+    private static final String[] PUBLIC_GET_PATHS = {
+        "/api/hello", "/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**"
+    };
     private static final String[] PUBLIC_POST_PATHS = {
         "/api/accounts/signup",
         "/api/accounts/signin",

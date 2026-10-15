@@ -57,6 +57,11 @@ The application listens on port 8080. Try `GET http://localhost:8080/api/hello`:
 {"message":"SWD392 backend is running"}
 ```
 
+API documentation is generated from the controllers at startup, so new endpoints appear without
+extra work. Open Swagger UI at `http://localhost:8080/swagger-ui.html` (raw OpenAPI JSON:
+`/v3/api-docs`). For protected endpoints, call `POST /api/accounts/signin`, then click **Authorize**
+and paste the returned access token.
+
 To use a different port in PowerShell, set `$env:SERVER_PORT = "8081"` before starting.
 
 ## Build and test
