@@ -63,6 +63,21 @@ public class RatingServiceImpl implements RatingService {
     }
 
     @Override
+    public boolean isModeEnabled(String modeCode) {
+        return ratingModeRepository
+                .findById(modeCode)
+                .map(RatingModeEntity::isEnabled)
+                .orElse(false);
+    }
+
+    // Joins the caller's transaction and holds the rating row lock until it commits, so callers that read the
+    // rating as an input (such as a queue entry) serialize per player and mode.
+    @Override
+    public PlayerRating getRatingForUpdate(Long accountId, String modeCode) {
+        return playerRatingEntityMapper.toModel(lockRating(accountId, modeCode));
+    }
+
+    @Override
     public List<RatingEvent> getGameEvents(Collection<Long> gameIds) {
         if (gameIds.isEmpty()) {
             return List.of();

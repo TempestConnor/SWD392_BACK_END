@@ -12,6 +12,10 @@ public interface RatingService {
 
     List<PlayerRating> getRatings(Long accountId);
 
+    boolean isModeEnabled(String modeCode);
+
+    PlayerRating getRatingForUpdate(Long accountId, String modeCode);
+
     List<RatingEvent> applyGameResult(RatedGameResult result);
 
     List<RatingEvent> getGameEvents(Collection<Long> gameIds);

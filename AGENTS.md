@@ -53,7 +53,7 @@ com/swd392/backend/<feature>/
 
 Not every feature needs every file — a read-only feature has no `Create<Feature>DTO`. Add a layer only when it actually carries weight.
 
-Apply this layout to new features. The hello endpoint and DTO remain in their starter packages unless a task includes moving them. `account` and `rating` (F01), `invitation` and `onlinegame` (F04) follow this layout; shared error handling lives in `common/exception`, security wiring in `config`, and token issuing in `security`.
+Apply this layout to new features. The hello endpoint and DTO remain in their starter packages unless a task includes moving them. `account` and `rating` (F01), `invitation` and `onlinegame` (F04), and `matchmaking` (F05, F06) follow this layout; shared error handling lives in `common/exception`, security wiring in `config`, and token issuing in `security`.
 
 ## Gotchas
 

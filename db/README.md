@@ -14,3 +14,4 @@ sqlcmd -S "localhost\SQLEXPRESS" -E -C -b -d ChessDB_Test -i db\migrations\001_i
 | Script | Feature | Change |
 | --- | --- | --- |
 | `001_invitation_host_color.sql` | F04 | `Invitation.host_color` (WHITE, BLACK, RANDOM; default RANDOM) |
+| `002_matchmaking_config_classical.sql` | F05/F06 | Seeds the CLASSICAL/STANDARD `MatchmakingConfig` row (heartbeat 10 s, grace 20 s, gap 100 +50/30 s, max 400) |

@@ -30,7 +30,9 @@ public enum AppErrorMessage {
     NOT_YOUR_TURN(HttpStatus.CONFLICT, "It is not your turn to move."),
     TIME_EXPIRED(HttpStatus.CONFLICT, "Your clock has run out."),
     DISCONNECT_FORFEIT_DUE(HttpStatus.CONFLICT, "The game has ended by disconnect forfeit; reload the game."),
-    ILLEGAL_MOVE(HttpStatus.BAD_REQUEST, "The move is not legal in the current position.");
+    ILLEGAL_MOVE(HttpStatus.BAD_REQUEST, "The move is not legal in the current position."),
+    MATCHMAKING_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Matchmaking is not available for this mode right now."),
+    QUEUE_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "You have not joined the matchmaking queue.");
 
     private final HttpStatus status;
     private final String message;
