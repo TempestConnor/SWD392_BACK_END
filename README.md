@@ -24,9 +24,10 @@ $env:JWT_SECRET = "<base64 key of at least 32 bytes>"
 
 SQL Server Express usually listens on a dynamic TCP port; use the port shown in SQL Server
 Configuration Manager (or enable SQL Server Browser). Optional: `JWT_ACCESS_TOKEN_TTL` (ISO-8601, default `PT1H`),
-`PENDING_HEARTBEAT_TIMEOUT` (silence that cancels a game before start, default `PT30S`) and
-`ONLINE_GAME_SWEEP_INTERVAL` (how often stale pending games are cancelled and timed-out active games are
-completed, default `PT5S`).
+`PENDING_HEARTBEAT_TIMEOUT` (silence that cancels a game before start, default `PT30S`),
+`ACTIVE_HEARTBEAT_TIMEOUT` (silence after which a player in a started game is shown as disconnected, default
+`PT30S`; the three-minute forfeit grace is fixed) and `ONLINE_GAME_SWEEP_INTERVAL` (how often stale pending games
+are cancelled and timed-out or forfeited active games are completed, default `PT5S`).
 
 CPU games need the Stockfish engine (GPL-3, run as a separate process). Download the official
 build for your platform from https://github.com/official-stockfish/Stockfish/releases (verify the

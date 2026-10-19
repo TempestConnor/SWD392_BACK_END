@@ -45,16 +45,24 @@ public interface OnlineGameMapper {
 
     @Named("white")
     default GamePlayerDTO toWhiteDto(OnlineGame game) {
-        GamePlayerDTO white =
-                new GamePlayerDTO(game.getWhiteAccountId(), game.getWhiteDisplayName(), game.getWhiteReadyAt() != null);
+        GamePlayerDTO white = new GamePlayerDTO(
+                game.getWhiteAccountId(),
+                game.getWhiteDisplayName(),
+                game.getWhiteReadyAt() != null,
+                game.isWhiteAbandonVoted(),
+                game.getWhiteDisconnectedAt());
 
         return white;
     }
 
     @Named("black")
     default GamePlayerDTO toBlackDto(OnlineGame game) {
-        GamePlayerDTO black =
-                new GamePlayerDTO(game.getBlackAccountId(), game.getBlackDisplayName(), game.getBlackReadyAt() != null);
+        GamePlayerDTO black = new GamePlayerDTO(
+                game.getBlackAccountId(),
+                game.getBlackDisplayName(),
+                game.getBlackReadyAt() != null,
+                game.isBlackAbandonVoted(),
+                game.getBlackDisconnectedAt());
 
         return black;
     }

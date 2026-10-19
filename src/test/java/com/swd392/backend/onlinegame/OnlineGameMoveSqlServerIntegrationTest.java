@@ -53,6 +53,7 @@ class OnlineGameMoveSqlServerIntegrationTest {
     @AfterEach
     void deleteTestData() {
         var pattern = "%" + TEST_EMAIL_DOMAIN;
+        jdbcTemplate.update("DELETE FROM RatingEvent WHERE game_id IN (" + TEST_GAMES + ")", pattern, pattern);
         jdbcTemplate.update("DELETE FROM GameMove WHERE game_id IN (" + TEST_GAMES + ")", pattern, pattern);
         jdbcTemplate.update("DELETE FROM Invitation WHERE host_account_id IN (" + TEST_ACCOUNTS + ")", pattern);
         jdbcTemplate.update("DELETE FROM OnlineGame WHERE game_id IN (" + TEST_GAMES + ")", pattern, pattern);
@@ -208,9 +209,9 @@ class OnlineGameMoveSqlServerIntegrationTest {
         // when
         var late = move(white, gameId, 1, "e2e4");
         var afterRejection = gameRow(gameId);
-        var due = onlineGameService.findGamesDueForTimeout();
-        onlineGameService.completeIfTimedOut(gameId);
-        onlineGameService.completeIfTimedOut(gameId);
+        var due = onlineGameService.findActiveGamesDue();
+        onlineGameService.resolveActiveGame(gameId);
+        onlineGameService.resolveActiveGame(gameId);
 
         // then
         var game = gameRow(gameId);
@@ -294,10 +295,17 @@ class OnlineGameMoveSqlServerIntegrationTest {
                 {"ply":%d,"move":"%s"}""".formatted(ply, move));
     }
 
-    // Shifts in SQL so the stored UTC value is moved without converting through the JVM time zone.
+    // Shifts in SQL so the stored UTC values are moved without converting through the JVM time zone. The game's
+    // earlier timestamps move with the turn start so the flag-fall end time stays after created_at (CK_Game_times).
     private void shiftTurnStartBack(long gameId, int seconds) {
         jdbcTemplate.update(
-                "UPDATE OnlineGame SET turn_started_at = DATEADD(second, ?, turn_started_at) WHERE game_id = ?",
+                "UPDATE OnlineGame SET created_at = DATEADD(second, ?, created_at),"
+                        + " ready_deadline_at = DATEADD(second, ?, ready_deadline_at),"
+                        + " started_at = DATEADD(second, ?, started_at),"
+                        + " turn_started_at = DATEADD(second, ?, turn_started_at) WHERE game_id = ?",
+                -seconds,
+                -seconds,
+                -seconds,
                 -seconds,
                 gameId);
     }

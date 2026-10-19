@@ -220,6 +220,38 @@ class OnlineGameControllerTest {
     }
 
     @Test
+    void make_move_after_disconnect_forfeit_due_returns_409_ko() throws Exception {
+        // given
+        when(onlineGameService.makeMove(eq(100L), eq(2L), any(MoveSubmission.class)))
+                .thenThrow(new AppException(AppErrorMessage.DISCONNECT_FORFEIT_DUE));
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/moves")
+                        .with(jwt().jwt(token -> token.subject("2")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"ply":1,"move":"e7e5"}"""))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("DISCONNECT_FORFEIT_DUE"));
+    }
+
+    @Test
+    void heartbeat_on_active_game_shows_disconnected_opponent_ok() throws Exception {
+        // given
+        var game = game(OnlineGameStatus.ACTIVE);
+        game.setStartedAt(CLAIMED_AT.plusSeconds(6));
+        game.setBlackDisconnectedAt(CLAIMED_AT.plusSeconds(30));
+        when(onlineGameService.recordHeartbeat(100L, 1L)).thenReturn(game);
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/heartbeat").with(jwt().jwt(token -> token.subject("1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.white.disconnectedAt").doesNotExist())
+                .andExpect(jsonPath("$.black.disconnectedAt").value("2026-10-08T10:00:30Z"));
+    }
+
+    @Test
     void make_illegal_move_returns_400_ko() throws Exception {
         // given
         when(onlineGameService.makeMove(eq(100L), eq(1L), any(MoveSubmission.class)))
@@ -244,6 +276,99 @@ class OnlineGameControllerTest {
                         {"ply":1,"move":"e2e4"}"""))
                 .andExpect(status().isUnauthorized());
         verify(onlineGameService, never()).makeMove(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void resign_returns_completed_game_with_opponent_win_ok() throws Exception {
+        // given
+        var game = game(OnlineGameStatus.COMPLETED);
+        game.setStartedAt(CLAIMED_AT.plusSeconds(6));
+        game.setEndedAt(NOW);
+        game.setOutcome(GameResult.BLACK_WIN);
+        game.setTerminationReason(TerminationReason.RESIGNATION);
+        when(onlineGameService.resign(100L, 1L)).thenReturn(game);
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/resign").with(jwt().jwt(token -> token.subject("1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.outcome").value("BLACK_WIN"))
+                .andExpect(jsonPath("$.terminationReason").value("RESIGNATION"))
+                .andExpect(jsonPath("$.endedAt").value("2026-10-08T10:00:20Z"));
+    }
+
+    @Test
+    void resign_finished_game_returns_409_ko() throws Exception {
+        // given
+        when(onlineGameService.resign(100L, 1L)).thenThrow(new AppException(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE));
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/resign").with(jwt().jwt(token -> token.subject("1"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.errorCode").value("ONLINE_GAME_NOT_ACTIVE"));
+    }
+
+    @Test
+    void resign_without_token_returns_401_ko() throws Exception {
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/resign")).andExpect(status().isUnauthorized());
+        verify(onlineGameService, never()).resign(anyLong(), anyLong());
+    }
+
+    @Test
+    void abandon_first_vote_returns_active_game_with_vote_flag_ok() throws Exception {
+        // given
+        var game = game(OnlineGameStatus.ACTIVE);
+        game.setStartedAt(CLAIMED_AT.plusSeconds(6));
+        game.setBlackAbandonVoted(true);
+        when(onlineGameService.voteToAbandon(100L, 2L)).thenReturn(game);
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/abandon").with(jwt().jwt(token -> token.subject("2"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.white.abandonVoted").value(false))
+                .andExpect(jsonPath("$.black.abandonVoted").value(true))
+                .andExpect(jsonPath("$.outcome").doesNotExist());
+    }
+
+    @Test
+    void abandon_second_vote_returns_draw_by_mutual_abandonment_ok() throws Exception {
+        // given
+        var game = game(OnlineGameStatus.COMPLETED);
+        game.setStartedAt(CLAIMED_AT.plusSeconds(6));
+        game.setEndedAt(NOW);
+        game.setOutcome(GameResult.DRAW);
+        game.setTerminationReason(TerminationReason.MUTUAL_ABANDONMENT);
+        game.setWhiteAbandonVoted(true);
+        game.setBlackAbandonVoted(true);
+        when(onlineGameService.voteToAbandon(100L, 1L)).thenReturn(game);
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/abandon").with(jwt().jwt(token -> token.subject("1"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.outcome").value("DRAW"))
+                .andExpect(jsonPath("$.terminationReason").value("MUTUAL_ABANDONMENT"));
+    }
+
+    @Test
+    void abandon_by_non_participant_returns_404_ko() throws Exception {
+        // given
+        when(onlineGameService.voteToAbandon(100L, 3L))
+                .thenThrow(new AppException(AppErrorMessage.ONLINE_GAME_NOT_FOUND));
+
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/abandon").with(jwt().jwt(token -> token.subject("3"))))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.errorCode").value("ONLINE_GAME_NOT_FOUND"));
+    }
+
+    @Test
+    void abandon_without_token_returns_401_ko() throws Exception {
+        // when / then
+        mockMvc.perform(post(GAME_URL + "/abandon")).andExpect(status().isUnauthorized());
+        verify(onlineGameService, never()).voteToAbandon(anyLong(), anyLong());
     }
 
     @Test

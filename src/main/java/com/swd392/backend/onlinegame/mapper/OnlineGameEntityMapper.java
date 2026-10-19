@@ -14,5 +14,7 @@ public interface OnlineGameEntityMapper {
     @Mapping(target = "whiteDisplayName", ignore = true)
     @Mapping(target = "blackDisplayName", ignore = true)
     @Mapping(target = "viewerColor", ignore = true)
+    @Mapping(target = "whiteAbandonVoted", ignore = true)
+    @Mapping(target = "blackAbandonVoted", ignore = true)
     OnlineGame toModel(OnlineGameEntity entity);
 }

@@ -43,6 +43,10 @@ public class OnlineGame {
     private Long whiteRemainingMs;
     private Long blackRemainingMs;
     private Instant turnStartedAt;
+    private Instant whiteDisconnectedAt;
+    private Instant blackDisconnectedAt;
     private Instant whiteLastSeenAt;
     private Instant blackLastSeenAt;
+    private boolean whiteAbandonVoted;
+    private boolean blackAbandonVoted;
 }

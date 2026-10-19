@@ -21,11 +21,15 @@ public interface OnlineGameService {
 
     List<GameMove> getMoves(Long gameId, Long accountId);
 
+    OnlineGame resign(Long gameId, Long accountId);
+
+    OnlineGame voteToAbandon(Long gameId, Long accountId);
+
     List<Long> findGamesDueForPreStartCancel();
 
     void cancelIfPreStartDue(Long gameId);
 
-    List<Long> findGamesDueForTimeout();
+    List<Long> findActiveGamesDue();
 
-    void completeIfTimedOut(Long gameId);
+    void resolveActiveGame(Long gameId);
 }

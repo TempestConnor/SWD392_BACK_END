@@ -99,6 +99,12 @@ public class OnlineGameEntity {
     @Column(name = "turn_started_at")
     private Instant turnStartedAt;
 
+    @Column(name = "white_disconnected_at")
+    private Instant whiteDisconnectedAt;
+
+    @Column(name = "black_disconnected_at")
+    private Instant blackDisconnectedAt;
+
     @Column(name = "white_last_seen_at")
     private Instant whiteLastSeenAt;
 

@@ -24,10 +24,12 @@ public enum AppErrorMessage {
     CANNOT_JOIN_OWN_INVITATION(HttpStatus.CONFLICT, "You cannot join your own invitation."),
     ONLINE_GAME_NOT_FOUND(HttpStatus.NOT_FOUND, "The online game does not exist."),
     ONLINE_GAME_ALREADY_STARTED(HttpStatus.CONFLICT, "The game has already started and can no longer be cancelled."),
+    GAME_NOT_IN_HISTORY(HttpStatus.NOT_FOUND, "Only completed games appear in match history."),
     ONLINE_GAME_NOT_ACTIVE(HttpStatus.CONFLICT, "The game is not in progress."),
     MOVE_OUT_OF_SEQUENCE(HttpStatus.CONFLICT, "The move does not follow the game's latest move; reload the game."),
     NOT_YOUR_TURN(HttpStatus.CONFLICT, "It is not your turn to move."),
     TIME_EXPIRED(HttpStatus.CONFLICT, "Your clock has run out."),
+    DISCONNECT_FORFEIT_DUE(HttpStatus.CONFLICT, "The game has ended by disconnect forfeit; reload the game."),
     ILLEGAL_MOVE(HttpStatus.BAD_REQUEST, "The move is not legal in the current position.");
 
     private final HttpStatus status;

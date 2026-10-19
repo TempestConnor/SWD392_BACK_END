@@ -72,6 +72,24 @@ public class OnlineGameController {
         return response;
     }
 
+    @PostMapping("/{gameId}/resign")
+    public OnlineGameDTO resign(@AuthenticationPrincipal Jwt jwt, @PathVariable Long gameId) {
+        var accountId = Long.valueOf(jwt.getSubject());
+        var game = onlineGameService.resign(gameId, accountId);
+        var response = onlineGameMapper.toDto(game);
+
+        return response;
+    }
+
+    @PostMapping("/{gameId}/abandon")
+    public OnlineGameDTO voteToAbandon(@AuthenticationPrincipal Jwt jwt, @PathVariable Long gameId) {
+        var accountId = Long.valueOf(jwt.getSubject());
+        var game = onlineGameService.voteToAbandon(gameId, accountId);
+        var response = onlineGameMapper.toDto(game);
+
+        return response;
+    }
+
     @GetMapping("/{gameId}/moves")
     public List<GameMoveDTO> getMoves(@AuthenticationPrincipal Jwt jwt, @PathVariable Long gameId) {
         var accountId = Long.valueOf(jwt.getSubject());

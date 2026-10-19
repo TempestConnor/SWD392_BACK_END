@@ -9,6 +9,8 @@ import com.swd392.backend.chess.service.ChessRulesService;
 import com.swd392.backend.common.exception.AppErrorMessage;
 import com.swd392.backend.common.exception.AppException;
 import com.swd392.backend.config.OnlineGameProperties;
+import com.swd392.backend.onlinegame.entity.GameAbandonVoteEntity;
+import com.swd392.backend.onlinegame.entity.GameAbandonVoteId;
 import com.swd392.backend.onlinegame.entity.GameMoveEntity;
 import com.swd392.backend.onlinegame.entity.GameMoveId;
 import com.swd392.backend.onlinegame.entity.OnlineGameEntity;
@@ -19,14 +21,18 @@ import com.swd392.backend.onlinegame.model.MoveSubmission;
 import com.swd392.backend.onlinegame.model.OnlineGame;
 import com.swd392.backend.onlinegame.model.OnlineGameStatus;
 import com.swd392.backend.onlinegame.model.TerminationReason;
+import com.swd392.backend.onlinegame.repository.GameAbandonVoteRepository;
 import com.swd392.backend.onlinegame.repository.GameMoveRepository;
 import com.swd392.backend.onlinegame.repository.OnlineGameRepository;
+import com.swd392.backend.rating.model.RatedGameResult;
+import com.swd392.backend.rating.service.RatingService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,6 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class OnlineGameServiceImpl implements OnlineGameService {
 
     private static final Duration READY_WINDOW = Duration.ofMinutes(3);
+    private static final Duration RECONNECT_GRACE = Duration.ofMinutes(3);
     private static final long MILLIS_PER_SECOND = 1000L;
     private static final int NO_MOVES_PLAYED = 0;
     private static final String PENDING = OnlineGameStatus.PENDING.name();
@@ -51,8 +58,10 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     private final OnlineGameEntityMapper onlineGameEntityMapper;
     private final GameMoveRepository gameMoveRepository;
     private final GameMoveEntityMapper gameMoveEntityMapper;
+    private final GameAbandonVoteRepository gameAbandonVoteRepository;
     private final ChessRulesService chessRulesService;
     private final AccountService accountService;
+    private final RatingService ratingService;
     private final OnlineGameProperties onlineGameProperties;
     private final Clock clock;
 
@@ -129,12 +138,15 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     @Override
     public OnlineGame recordHeartbeat(Long gameId, Long accountId) {
         OnlineGameEntity entity = lockParticipantGame(gameId, accountId);
+        if (!isPending(entity) && !isActive(entity)) {
+            return toViewerGame(entity, accountId);
+        }
         Instant now = now();
         if (isPending(entity)) {
             recordSeen(entity, accountId, now);
             cancelIfDue(entity, now);
-        } else if (!completeIfFlagFallen(entity, now)) {
-            return toViewerGame(entity, accountId);
+        } else if (!completeIfEndingDue(entity, now)) {
+            recordPresence(entity, accountId, now);
         }
         OnlineGameEntity saved = onlineGameRepository.save(entity);
 
@@ -149,6 +161,7 @@ public class OnlineGameServiceImpl implements OnlineGameService {
         }
         requireMoveAllowed(entity, accountId, submission);
         Instant now = now();
+        rejectIfEndingDue(entity, now);
         boolean whiteMoves = isWhite(entity, accountId);
         Long moverRemainingMs = moverRemainingAfterMove(entity, now);
         List<String> playedMoves = gameMoveRepository.findByIdGameIdOrderByIdPlyAsc(gameId).stream()
@@ -174,6 +187,7 @@ public class OnlineGameServiceImpl implements OnlineGameService {
                 .withAcceptedAt(now)
                 .build();
         gameMoveRepository.save(gameMoveEntityMapper.toEntity(move));
+        recordPresence(entity, accountId, now);
         finishIfOver(entity, position, now);
         OnlineGameEntity saved = onlineGameRepository.save(entity);
         log.info(
@@ -197,6 +211,55 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     }
 
     @Override
+    public OnlineGame resign(Long gameId, Long accountId) {
+        OnlineGameEntity entity = lockParticipantGame(gameId, accountId);
+        if (isResignedBy(entity, accountId)) {
+            return toViewerGame(entity, accountId);
+        }
+        Instant now = now();
+        if (!completeIfEndingDue(entity, now)) {
+            requireActive(entity);
+            GameResult outcome = isWhite(entity, accountId) ? GameResult.BLACK_WIN : GameResult.WHITE_WIN;
+            complete(entity, now, outcome, TerminationReason.RESIGNATION);
+        }
+        OnlineGameEntity saved = onlineGameRepository.save(entity);
+
+        return toViewerGame(saved, accountId);
+    }
+
+    // F10: a vote is permanent until the game ends (decision 2026-10-19); the second participant's vote ends
+    // the game as a draw. Votes are serialized by the game row lock, so simultaneous votes complete it once.
+    @Override
+    public OnlineGame voteToAbandon(Long gameId, Long accountId) {
+        OnlineGameEntity entity = lockParticipantGame(gameId, accountId);
+        List<GameAbandonVoteEntity> votes = gameAbandonVoteRepository.findByIdGameId(gameId);
+        boolean callerVoted =
+                votes.stream().anyMatch(vote -> accountId.equals(vote.getId().getAccountId()));
+        Instant now = now();
+        boolean ended = completeIfEndingDue(entity, now);
+        if (callerVoted && !ended) {
+            return toViewerGame(entity, accountId);
+        }
+        if (!ended) {
+            requireActive(entity);
+            GameAbandonVoteEntity vote = GameAbandonVoteEntity.builder()
+                    .withId(new GameAbandonVoteId(gameId, accountId))
+                    .withVotedAt(now)
+                    .build();
+            gameAbandonVoteRepository.save(vote);
+            log.info("[ONLINE_GAME] - ACTION: voteToAbandon: gameId: {}, accountId: {}", gameId, accountId);
+            recordPresence(entity, accountId, now);
+            boolean opponentVoted = !votes.isEmpty();
+            if (opponentVoted) {
+                complete(entity, now, GameResult.DRAW, TerminationReason.MUTUAL_ABANDONMENT);
+            }
+        }
+        OnlineGameEntity saved = onlineGameRepository.save(entity);
+
+        return toViewerGame(saved, accountId);
+    }
+
+    @Override
     public List<Long> findGamesDueForPreStartCancel() {
         Instant now = now();
 
@@ -213,19 +276,21 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     }
 
     @Override
-    public List<Long> findGamesDueForTimeout() {
+    public List<Long> findActiveGamesDue() {
         Instant now = now();
 
-        return onlineGameRepository.findByStatusAndClockEnabledTrue(ACTIVE).stream()
-                .filter(entity -> isFlagFallen(entity, now))
+        return onlineGameRepository.findActiveSweepCandidates(ACTIVE, activeSilentSince(now)).stream()
+                .filter(entity -> dueEnding(entity, now).isPresent() || hasUnmarkedDisconnect(entity, now))
                 .map(OnlineGameEntity::getId)
                 .toList();
     }
 
     @Override
-    public void completeIfTimedOut(Long gameId) {
-        onlineGameRepository.findForUpdateById(gameId).ifPresent(entity -> {
-            if (completeIfFlagFallen(entity, now())) {
+    public void resolveActiveGame(Long gameId) {
+        onlineGameRepository.findForUpdateById(gameId).filter(this::isActive).ifPresent(entity -> {
+            Instant now = now();
+            boolean changed = completeIfEndingDue(entity, now) || markDisconnected(entity, now);
+            if (changed) {
                 onlineGameRepository.save(entity);
             }
         });
@@ -254,9 +319,7 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     }
 
     private void requireMoveAllowed(OnlineGameEntity entity, Long accountId, MoveSubmission submission) {
-        if (!ACTIVE.equals(entity.getStatus())) {
-            throw new AppException(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
-        }
+        requireActive(entity);
         if (submission.getPly() != entity.getLastPly() + 1) {
             throw new AppException(AppErrorMessage.MOVE_OUT_OF_SEQUENCE);
         }
@@ -265,50 +328,142 @@ public class OnlineGameServiceImpl implements OnlineGameService {
         }
     }
 
-    // A move arriving once the mover's flag has fallen is rejected and changes no rows (decision 2026-10-15);
-    // the TIMEOUT result is recorded separately by completeIfFlagFallen.
     private Long moverRemainingAfterMove(OnlineGameEntity entity, Instant now) {
         if (!entity.isClockEnabled()) {
             return null;
         }
-        long remainingAtMoveMs = sideToMoveRemainingMs(entity, now);
-        if (remainingAtMoveMs <= 0) {
-            throw new AppException(AppErrorMessage.TIME_EXPIRED);
-        }
 
-        return remainingAtMoveMs + entity.getIncrementSeconds() * MILLIS_PER_SECOND;
+        return sideToMoveRemainingMs(entity, now) + entity.getIncrementSeconds() * MILLIS_PER_SECOND;
     }
 
-    // BR-GAME-014/F09: the side to move loses on time once its clock reaches zero, whatever material the
-    // opponent has left (decision 2026-10-15). ended_at is the flag-fall instant, not the detection time.
-    private boolean completeIfFlagFallen(OnlineGameEntity entity, Instant now) {
-        if (!ACTIVE.equals(entity.getStatus()) || !isFlagFallen(entity, now)) {
+    // A move arriving once the game's ending is due is rejected and changes no rows (decision 2026-10-15);
+    // the TIMEOUT or DISCONNECT result is recorded separately by completeIfEndingDue.
+    private void rejectIfEndingDue(OnlineGameEntity entity, Instant now) {
+        Optional<Ending> ending = dueEnding(entity, now);
+        if (ending.isEmpty()) {
+            return;
+        }
+        boolean timedOut = ending.get().reason() == TerminationReason.TIMEOUT;
+
+        throw new AppException(timedOut ? AppErrorMessage.TIME_EXPIRED : AppErrorMessage.DISCONNECT_FORFEIT_DUE);
+    }
+
+    // Records the due ending, if any. ended_at is the instant it fell due, not the detection time, and the
+    // running clock is stopped at that instant (a flagged player's remaining time is 0).
+    private boolean completeIfEndingDue(OnlineGameEntity entity, Instant now) {
+        Optional<Ending> ending = dueEnding(entity, now);
+        if (ending.isEmpty()) {
             return false;
         }
-        boolean whiteFlagged = isWhiteToMove(entity);
-        long flaggedRemainingMs = whiteFlagged ? entity.getWhiteRemainingMs() : entity.getBlackRemainingMs();
-        if (whiteFlagged) {
-            entity.setWhiteRemainingMs(0L);
-        } else {
-            entity.setBlackRemainingMs(0L);
+        Ending due = ending.get();
+        boolean whiteLoses = due.loser() == ChessColor.WHITE;
+        if (entity.isClockEnabled()) {
+            long remainingMs = Math.max(0L, sideToMoveRemainingMs(entity, due.at()));
+            if (isWhiteToMove(entity)) {
+                entity.setWhiteRemainingMs(remainingMs);
+            } else {
+                entity.setBlackRemainingMs(remainingMs);
+            }
         }
-        GameResult outcome = whiteFlagged ? GameResult.BLACK_WIN : GameResult.WHITE_WIN;
-        entity.setStatus(OnlineGameStatus.COMPLETED.name());
-        entity.setEndedAt(entity.getTurnStartedAt().plusMillis(flaggedRemainingMs));
-        entity.setOutcome(outcome.name());
-        entity.setTerminationReason(TerminationReason.TIMEOUT.name());
-        log.info(
-                "[ONLINE_GAME] - ACTION: completeGame: gameId: {}, outcome: {}, reason: {}",
-                entity.getId(),
-                entity.getOutcome(),
-                TerminationReason.TIMEOUT);
+        if (due.reason() == TerminationReason.DISCONNECT) {
+            markForfeitedDisconnect(entity, whiteLoses);
+        }
+        GameResult outcome = whiteLoses ? GameResult.BLACK_WIN : GameResult.WHITE_WIN;
+        complete(entity, due.at(), outcome, due.reason());
 
         return true;
     }
 
-    // A game without a clock never times out.
-    private boolean isFlagFallen(OnlineGameEntity entity, Instant now) {
-        return entity.isClockEnabled() && sideToMoveRemainingMs(entity, now) <= 0;
+    // The ending that fell due first decides an active game:
+    // - BR-GAME-014/F09: the side to move loses on time once its clock reaches zero, whatever material the
+    //   opponent has left (decision 2026-10-15). A game without a clock never times out.
+    // - BR-GAME-015/016/F11: a participant forfeits three minutes after their last contact; reaching the
+    //   deadline forfeits, and when both are away the earlier deadline loses (decisions 2026-10-19).
+    // Candidates are in tie-break order: on an exact tie the flag falls first, then the side to move forfeits.
+    private Optional<Ending> dueEnding(OnlineGameEntity entity, Instant now) {
+        if (!isActive(entity)) {
+            return Optional.empty();
+        }
+        ChessColor sideToMove = isWhiteToMove(entity) ? ChessColor.WHITE : ChessColor.BLACK;
+        ChessColor opponent = sideToMove == ChessColor.WHITE ? ChessColor.BLACK : ChessColor.WHITE;
+        List<Ending> candidates = entity.isClockEnabled()
+                ? List.of(flagFall(entity, sideToMove), forfeit(entity, sideToMove), forfeit(entity, opponent))
+                : List.of(forfeit(entity, sideToMove), forfeit(entity, opponent));
+        Ending first = null;
+        for (Ending candidate : candidates) {
+            boolean due = !candidate.at().isAfter(now);
+            if (due && (first == null || candidate.at().isBefore(first.at()))) {
+                first = candidate;
+            }
+        }
+
+        return Optional.ofNullable(first);
+    }
+
+    private Ending flagFall(OnlineGameEntity entity, ChessColor sideToMove) {
+        long remainingMs = sideToMove == ChessColor.WHITE ? entity.getWhiteRemainingMs() : entity.getBlackRemainingMs();
+
+        return new Ending(entity.getTurnStartedAt().plusMillis(remainingMs), sideToMove, TerminationReason.TIMEOUT);
+    }
+
+    private Ending forfeit(OnlineGameEntity entity, ChessColor player) {
+        Instant lastSeenAt = player == ChessColor.WHITE ? entity.getWhiteLastSeenAt() : entity.getBlackLastSeenAt();
+
+        return new Ending(lastSeen(lastSeenAt, entity).plus(RECONNECT_GRACE), player, TerminationReason.DISCONNECT);
+    }
+
+    // The forfeiting player stays recorded as disconnected since their last contact.
+    private void markForfeitedDisconnect(OnlineGameEntity entity, boolean white) {
+        if (white && entity.getWhiteDisconnectedAt() == null) {
+            entity.setWhiteDisconnectedAt(lastSeen(entity.getWhiteLastSeenAt(), entity));
+        }
+        if (!white && entity.getBlackDisconnectedAt() == null) {
+            entity.setBlackDisconnectedAt(lastSeen(entity.getBlackLastSeenAt(), entity));
+        }
+    }
+
+    // Any action by a participant in an active game reconnects them; the opponent is marked disconnected,
+    // from their last contact, once silent for the active heartbeat timeout.
+    private void recordPresence(OnlineGameEntity entity, Long accountId, Instant now) {
+        recordSeen(entity, accountId, now);
+        markDisconnected(entity, now);
+    }
+
+    private boolean markDisconnected(OnlineGameEntity entity, Instant now) {
+        Instant silentSince = activeSilentSince(now);
+        Instant whiteLastSeen = lastSeen(entity.getWhiteLastSeenAt(), entity);
+        Instant blackLastSeen = lastSeen(entity.getBlackLastSeenAt(), entity);
+        boolean whiteSilent = isUnmarkedSilence(entity.getWhiteDisconnectedAt(), whiteLastSeen, silentSince);
+        boolean blackSilent = isUnmarkedSilence(entity.getBlackDisconnectedAt(), blackLastSeen, silentSince);
+        if (whiteSilent) {
+            entity.setWhiteDisconnectedAt(whiteLastSeen);
+        }
+        if (blackSilent) {
+            entity.setBlackDisconnectedAt(blackLastSeen);
+        }
+        if (whiteSilent || blackSilent) {
+            log.info(
+                    "[ONLINE_GAME] - ACTION: markDisconnected: gameId: {}, white: {}, black: {}",
+                    entity.getId(),
+                    whiteSilent,
+                    blackSilent);
+        }
+
+        return whiteSilent || blackSilent;
+    }
+
+    private boolean hasUnmarkedDisconnect(OnlineGameEntity entity, Instant now) {
+        Instant silentSince = activeSilentSince(now);
+        Instant whiteLastSeen = lastSeen(entity.getWhiteLastSeenAt(), entity);
+        Instant blackLastSeen = lastSeen(entity.getBlackLastSeenAt(), entity);
+
+        return isUnmarkedSilence(entity.getWhiteDisconnectedAt(), whiteLastSeen, silentSince)
+                || isUnmarkedSilence(entity.getBlackDisconnectedAt(), blackLastSeen, silentSince);
+    }
+
+    // Exactly the timeout counts as silent, as for pending games.
+    private boolean isUnmarkedSilence(Instant disconnectedAt, Instant lastSeenAt, Instant silentSince) {
+        return disconnectedAt == null && !lastSeenAt.isAfter(silentSince);
     }
 
     private long sideToMoveRemainingMs(OnlineGameEntity entity, Instant now) {
@@ -329,16 +484,50 @@ public class OnlineGameServiceImpl implements OnlineGameService {
         if (position.getStatus() == GameStatus.ACTIVE) {
             return;
         }
-        TerminationReason reason = toTerminationReason(position.getStatus());
+        complete(entity, now, position.getResult(), toTerminationReason(position.getStatus()));
+    }
+
+    private void complete(OnlineGameEntity entity, Instant endedAt, GameResult outcome, TerminationReason reason) {
         entity.setStatus(OnlineGameStatus.COMPLETED.name());
-        entity.setEndedAt(now);
-        entity.setOutcome(position.getResult().name());
+        entity.setEndedAt(endedAt);
+        entity.setOutcome(outcome.name());
         entity.setTerminationReason(reason.name());
         log.info(
                 "[ONLINE_GAME] - ACTION: completeGame: gameId: {}, outcome: {}, reason: {}",
                 entity.getId(),
-                entity.getOutcome(),
+                outcome,
                 reason);
+        applyRatingIfRated(entity, outcome);
+    }
+
+    // F12/BR-RATE-006-008: every completion path ends here under the game row lock, so a rated game's result
+    // is rated once and in the same transaction; unrated games and pre-start cancellations are never rated.
+    private void applyRatingIfRated(OnlineGameEntity entity, GameResult outcome) {
+        if (!entity.isRated()) {
+            return;
+        }
+        RatedGameResult result = RatedGameResult.builder()
+                .withGameId(entity.getId())
+                .withModeCode(entity.getModeCode())
+                .withWhiteAccountId(entity.getWhiteAccountId())
+                .withBlackAccountId(entity.getBlackAccountId())
+                .withOutcome(outcome)
+                .build();
+        ratingService.applyGameResult(result);
+    }
+
+    private void requireActive(OnlineGameEntity entity) {
+        if (!isActive(entity)) {
+            throw new AppException(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
+        }
+    }
+
+    // A retried resignation (e.g. after a lost response) returns the game the caller already resigned.
+    private boolean isResignedBy(OnlineGameEntity entity, Long accountId) {
+        GameResult callerLoss = isWhite(entity, accountId) ? GameResult.BLACK_WIN : GameResult.WHITE_WIN;
+
+        return TerminationReason.RESIGNATION.name().equals(entity.getTerminationReason())
+                && callerLoss.name().equals(entity.getOutcome());
     }
 
     private TerminationReason toTerminationReason(GameStatus status) {
@@ -400,8 +589,10 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     private void recordSeen(OnlineGameEntity entity, Long accountId, Instant now) {
         if (isWhite(entity, accountId)) {
             entity.setWhiteLastSeenAt(now);
+            entity.setWhiteDisconnectedAt(null);
         } else {
             entity.setBlackLastSeenAt(now);
+            entity.setBlackDisconnectedAt(null);
         }
     }
 
@@ -412,6 +603,14 @@ public class OnlineGameServiceImpl implements OnlineGameService {
         game.setWhiteDisplayName(displayNames.get(game.getWhiteAccountId()));
         game.setBlackDisplayName(displayNames.get(game.getBlackAccountId()));
         game.setViewerColor(isWhite(entity, accountId) ? ChessColor.WHITE : ChessColor.BLACK);
+        boolean started = entity.getStartedAt() != null;
+        if (started) {
+            List<Long> voterIds = gameAbandonVoteRepository.findByIdGameId(entity.getId()).stream()
+                    .map(vote -> vote.getId().getAccountId())
+                    .toList();
+            game.setWhiteAbandonVoted(voterIds.contains(game.getWhiteAccountId()));
+            game.setBlackAbandonVoted(voterIds.contains(game.getBlackAccountId()));
+        }
 
         return game;
     }
@@ -425,8 +624,16 @@ public class OnlineGameServiceImpl implements OnlineGameService {
         return now.minus(onlineGameProperties.pendingHeartbeatTimeout());
     }
 
+    private Instant activeSilentSince(Instant now) {
+        return now.minus(onlineGameProperties.activeHeartbeatTimeout());
+    }
+
     private boolean isPending(OnlineGameEntity entity) {
         return PENDING.equals(entity.getStatus());
+    }
+
+    private boolean isActive(OnlineGameEntity entity) {
+        return ACTIVE.equals(entity.getStatus());
     }
 
     private boolean isWhiteToMove(OnlineGameEntity entity) {
@@ -445,4 +652,6 @@ public class OnlineGameServiceImpl implements OnlineGameService {
     private Instant now() {
         return clock.instant().truncatedTo(ChronoUnit.MILLIS);
     }
+
+    private record Ending(Instant at, ChessColor loser, TerminationReason reason) {}
 }

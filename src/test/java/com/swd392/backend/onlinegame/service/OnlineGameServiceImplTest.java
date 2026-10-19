@@ -18,6 +18,8 @@ import com.swd392.backend.chess.service.ChessRulesServiceImpl;
 import com.swd392.backend.common.exception.AppErrorMessage;
 import com.swd392.backend.common.exception.AppException;
 import com.swd392.backend.config.OnlineGameProperties;
+import com.swd392.backend.onlinegame.entity.GameAbandonVoteEntity;
+import com.swd392.backend.onlinegame.entity.GameAbandonVoteId;
 import com.swd392.backend.onlinegame.entity.GameMoveEntity;
 import com.swd392.backend.onlinegame.entity.GameMoveId;
 import com.swd392.backend.onlinegame.entity.OnlineGameEntity;
@@ -28,8 +30,11 @@ import com.swd392.backend.onlinegame.model.MoveSubmission;
 import com.swd392.backend.onlinegame.model.OnlineGame;
 import com.swd392.backend.onlinegame.model.OnlineGameStatus;
 import com.swd392.backend.onlinegame.model.TerminationReason;
+import com.swd392.backend.onlinegame.repository.GameAbandonVoteRepository;
 import com.swd392.backend.onlinegame.repository.GameMoveRepository;
 import com.swd392.backend.onlinegame.repository.OnlineGameRepository;
+import com.swd392.backend.rating.model.RatedGameResult;
+import com.swd392.backend.rating.service.RatingService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -61,6 +66,8 @@ class OnlineGameServiceImplTest {
     private static final Long OUTSIDER_ID = 3L;
     private static final Instant TURN_STARTED_AT = NOW.minusSeconds(5);
     private static final long FULL_CLOCK_MS = 1_800_000L;
+    private static final Duration RECONNECT_GRACE = Duration.ofMinutes(3);
+    private static final Instant LATER = CLAIMED_AT.plus(Duration.ofMinutes(10));
 
     @Mock
     private OnlineGameRepository onlineGameRepository;
@@ -74,15 +81,21 @@ class OnlineGameServiceImplTest {
     @Spy
     private GameMoveEntityMapper gameMoveEntityMapper = Mappers.getMapper(GameMoveEntityMapper.class);
 
+    @Mock
+    private GameAbandonVoteRepository gameAbandonVoteRepository;
+
     @Spy
     private ChessRulesServiceImpl chessRulesService = new ChessRulesServiceImpl();
 
     @Mock
     private AccountService accountService;
 
+    @Mock
+    private RatingService ratingService;
+
     @Spy
     private OnlineGameProperties onlineGameProperties =
-            new OnlineGameProperties(HEARTBEAT_TIMEOUT, Duration.ofSeconds(5));
+            new OnlineGameProperties(HEARTBEAT_TIMEOUT, HEARTBEAT_TIMEOUT, Duration.ofSeconds(5));
 
     @Mock
     private Clock clock;
@@ -417,9 +430,9 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void heartbeat_on_active_game_changes_nothing_ok() {
+    void heartbeat_on_completed_game_changes_nothing_ok() {
         // given
-        var stored = activeGame();
+        var stored = resignedByWhite();
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
@@ -427,7 +440,9 @@ class OnlineGameServiceImplTest {
 
         // then
         verify(onlineGameRepository, never()).save(any());
-        assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.ACTIVE);
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.COMPLETED),
+                () -> assertThat(stored.getWhiteLastSeenAt()).isEqualTo(CLAIMED_AT));
     }
 
     @Test
@@ -725,7 +740,7 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void heartbeat_on_active_game_with_time_left_changes_nothing_ok() {
+    void heartbeat_on_active_game_with_time_left_records_presence_and_stays_active_ok() {
         // given
         var stored = movableGame();
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
@@ -734,12 +749,16 @@ class OnlineGameServiceImplTest {
         var game = onlineGameService.recordHeartbeat(GAME_ID, WHITE_ID);
 
         // then
-        verify(onlineGameRepository, never()).save(any());
-        assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.ACTIVE);
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.ACTIVE),
+                () -> assertThat(stored.getWhiteLastSeenAt()).isEqualTo(NOW),
+                () -> assertThat(stored.getBlackLastSeenAt()).isEqualTo(CLAIMED_AT),
+                () -> assertThat(stored.getWhiteRemainingMs()).isEqualTo(FULL_CLOCK_MS));
     }
 
     @Test
-    void find_games_due_for_timeout_returns_only_games_whose_side_to_move_ran_out_ok() {
+    void find_active_games_due_returns_only_games_whose_side_to_move_ran_out_ok() {
         // given
         var whiteFlagged = movableGame();
         whiteFlagged.setWhiteRemainingMs(5_000L);
@@ -751,25 +770,25 @@ class OnlineGameServiceImplTest {
         blackFlagged.setId(GAME_ID + 2);
         blackFlagged.setLastPly(1);
         blackFlagged.setBlackRemainingMs(4_999L);
-        when(onlineGameRepository.findByStatusAndClockEnabledTrue("ACTIVE"))
+        when(onlineGameRepository.findActiveSweepCandidates("ACTIVE", NOW.minus(HEARTBEAT_TIMEOUT)))
                 .thenReturn(List.of(whiteFlagged, blackToMoveWithTime, blackFlagged));
 
         // when
-        var due = onlineGameService.findGamesDueForTimeout();
+        var due = onlineGameService.findActiveGamesDue();
 
         // then
         assertThat(due).containsExactly(GAME_ID, GAME_ID + 2);
     }
 
     @Test
-    void complete_if_timed_out_records_white_timeout_as_black_win_at_flag_fall_time_ok() {
+    void resolve_active_game_records_white_timeout_as_black_win_at_flag_fall_time_ok() {
         // given
         var stored = movableGame();
         stored.setWhiteRemainingMs(3_000L);
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         verify(onlineGameRepository).save(stored);
@@ -783,7 +802,7 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_records_black_timeout_as_white_win_ok() {
+    void resolve_active_game_records_black_timeout_as_white_win_ok() {
         // given
         var stored = movableGame();
         stored.setLastPly(1);
@@ -791,7 +810,7 @@ class OnlineGameServiceImplTest {
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         assertAll(
@@ -803,7 +822,7 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_is_a_loss_even_when_opponent_has_only_a_king_ok() {
+    void resolve_active_game_is_a_loss_even_when_opponent_has_only_a_king_ok() {
         // given
         var stored = movableGame();
         stored.setCurrentFen("8/8/4k3/8/8/8/3QK3/8 w - - 0 60");
@@ -812,7 +831,7 @@ class OnlineGameServiceImplTest {
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         assertAll(
@@ -821,14 +840,14 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_leaves_game_with_time_left_ok() {
+    void resolve_active_game_leaves_game_with_time_left_ok() {
         // given
         var stored = movableGame();
         stored.setWhiteRemainingMs(5_001L);
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         verify(onlineGameRepository, never()).save(any());
@@ -836,14 +855,14 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_never_times_out_game_without_clock_ok() {
+    void resolve_active_game_never_times_out_game_without_clock_ok() {
         // given
         var stored = activeGame();
         stored.setTurnStartedAt(CLAIMED_AT);
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         verify(onlineGameRepository, never()).save(any());
@@ -851,7 +870,7 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_leaves_game_already_completed_by_a_move_ok() {
+    void resolve_active_game_leaves_game_already_completed_by_a_move_ok() {
         // given
         var stored = movableGame();
         stored.setWhiteRemainingMs(1_000L);
@@ -861,7 +880,7 @@ class OnlineGameServiceImplTest {
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         verify(onlineGameRepository, never()).save(any());
@@ -871,12 +890,12 @@ class OnlineGameServiceImplTest {
     }
 
     @Test
-    void complete_if_timed_out_ignores_missing_game_ok() {
+    void resolve_active_game_ignores_missing_game_ok() {
         // given
         when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.empty());
 
         // when
-        onlineGameService.completeIfTimedOut(GAME_ID);
+        onlineGameService.resolveActiveGame(GAME_ID);
 
         // then
         verify(onlineGameRepository, never()).save(any());
@@ -911,6 +930,659 @@ class OnlineGameServiceImplTest {
         verify(gameMoveRepository, never()).findByIdGameIdOrderByIdPlyAsc(any());
     }
 
+    @Test
+    void resign_by_white_completes_game_as_black_win_ok() {
+        // given
+        var stored = movableGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.resign(GAME_ID, WHITE_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(stored.getStatus()).isEqualTo("COMPLETED"),
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("RESIGNATION"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(NOW),
+                () -> assertThat(game.getOutcome()).isEqualTo(GameResult.BLACK_WIN),
+                () -> assertThat(game.getViewerColor()).isEqualTo(ChessColor.WHITE));
+    }
+
+    @Test
+    void resign_by_black_out_of_turn_completes_game_as_white_win_ok() {
+        // given
+        var stored = movableGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resign(GAME_ID, BLACK_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("WHITE_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("RESIGNATION"));
+    }
+
+    @Test
+    void resign_retry_after_own_resignation_returns_game_without_saving_ok() {
+        // given
+        var stored = resignedByWhite();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.resign(GAME_ID, WHITE_ID);
+
+        // then
+        verify(onlineGameRepository, never()).save(any());
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.COMPLETED),
+                () -> assertThat(game.getTerminationReason()).isEqualTo(TerminationReason.RESIGNATION));
+    }
+
+    @Test
+    void resign_after_opponent_resigned_is_rejected_ko() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(resignedByWhite()));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.resign(GAME_ID, BLACK_ID))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
+        verify(onlineGameRepository, never()).save(any());
+    }
+
+    @Test
+    void resign_in_pending_game_is_rejected_ko() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(pendingGame()));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.resign(GAME_ID, WHITE_ID))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
+        verify(onlineGameRepository, never()).save(any());
+    }
+
+    @Test
+    void resign_after_flag_fall_records_timeout_instead_ok() {
+        // given
+        var stored = movableGame();
+        stored.setWhiteRemainingMs(4_000L);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resign(GAME_ID, BLACK_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(TURN_STARTED_AT.plusMillis(4_000L)));
+    }
+
+    @Test
+    void resign_by_non_participant_is_not_found_ko() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(movableGame()));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.resign(GAME_ID, OUTSIDER_ID))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ONLINE_GAME_NOT_FOUND);
+        verify(onlineGameRepository, never()).save(any());
+    }
+
+    @Test
+    void vote_to_abandon_first_vote_is_recorded_and_game_stays_active_ok() {
+        // given
+        var stored = movableGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(), List.of(vote(WHITE_ID)));
+        var captor = ArgumentCaptor.forClass(GameAbandonVoteEntity.class);
+
+        // when
+        var game = onlineGameService.voteToAbandon(GAME_ID, WHITE_ID);
+
+        // then
+        verify(gameAbandonVoteRepository).save(captor.capture());
+        var vote = captor.getValue();
+        assertAll(
+                () -> assertThat(vote.getId()).isEqualTo(new GameAbandonVoteId(GAME_ID, WHITE_ID)),
+                () -> assertThat(vote.getVotedAt()).isEqualTo(NOW),
+                () -> assertThat(stored.getStatus()).isEqualTo("ACTIVE"),
+                () -> assertThat(stored.getOutcome()).isNull(),
+                () -> assertThat(game.isWhiteAbandonVoted()).isTrue(),
+                () -> assertThat(game.isBlackAbandonVoted()).isFalse());
+    }
+
+    @Test
+    void vote_to_abandon_second_vote_completes_game_as_draw_ok() {
+        // given
+        var stored = movableGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID))
+                .thenReturn(List.of(vote(WHITE_ID)), List.of(vote(WHITE_ID), vote(BLACK_ID)));
+
+        // when
+        var game = onlineGameService.voteToAbandon(GAME_ID, BLACK_ID);
+
+        // then
+        verify(gameAbandonVoteRepository).save(any(GameAbandonVoteEntity.class));
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(stored.getStatus()).isEqualTo("COMPLETED"),
+                () -> assertThat(stored.getOutcome()).isEqualTo("DRAW"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("MUTUAL_ABANDONMENT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(NOW),
+                () -> assertThat(game.isWhiteAbandonVoted()).isTrue(),
+                () -> assertThat(game.isBlackAbandonVoted()).isTrue());
+    }
+
+    @Test
+    void vote_to_abandon_repeated_keeps_single_vote_without_saving_ok() {
+        // given
+        var stored = movableGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(vote(WHITE_ID)));
+
+        // when
+        var game = onlineGameService.voteToAbandon(GAME_ID, WHITE_ID);
+
+        // then
+        verify(gameAbandonVoteRepository, never()).save(any());
+        verify(onlineGameRepository, never()).save(any());
+        assertAll(() -> assertThat(stored.getStatus()).isEqualTo("ACTIVE"), () -> assertThat(game.isWhiteAbandonVoted())
+                .isTrue());
+    }
+
+    @Test
+    void vote_to_abandon_in_pending_game_is_rejected_ko() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(pendingGame()));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.voteToAbandon(GAME_ID, WHITE_ID))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
+        verify(gameAbandonVoteRepository, never()).save(any());
+    }
+
+    @Test
+    void vote_to_abandon_completed_game_is_rejected_ko() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(resignedByWhite()));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.voteToAbandon(GAME_ID, BLACK_ID))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.ONLINE_GAME_NOT_ACTIVE);
+        verify(gameAbandonVoteRepository, never()).save(any());
+    }
+
+    @Test
+    void vote_to_abandon_after_flag_fall_records_timeout_without_vote_ok() {
+        // given
+        var stored = movableGame();
+        stored.setWhiteRemainingMs(4_000L);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(vote(BLACK_ID)));
+
+        // when
+        onlineGameService.voteToAbandon(GAME_ID, WHITE_ID);
+
+        // then
+        verify(gameAbandonVoteRepository, never()).save(any());
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"));
+    }
+
+    @Test
+    void vote_to_abandon_repeated_after_flag_fall_records_timeout_ok() {
+        // given
+        var stored = movableGame();
+        stored.setWhiteRemainingMs(4_000L);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(vote(WHITE_ID)));
+
+        // when
+        var game = onlineGameService.voteToAbandon(GAME_ID, WHITE_ID);
+
+        // then
+        verify(gameAbandonVoteRepository, never()).save(any());
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.COMPLETED),
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"));
+    }
+
+    @Test
+    void get_game_shows_opponent_abandon_vote_ok() {
+        // given
+        when(onlineGameRepository.findById(GAME_ID)).thenReturn(Optional.of(movableGame()));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(vote(BLACK_ID)));
+
+        // when
+        var game = onlineGameService.getGame(GAME_ID, WHITE_ID);
+
+        // then
+        assertAll(() -> assertThat(game.isWhiteAbandonVoted()).isFalse(), () -> assertThat(game.isBlackAbandonVoted())
+                .isTrue());
+    }
+
+    @Test
+    void heartbeat_reconnects_disconnected_caller_ok() {
+        // given
+        var stored = activeGame();
+        stored.setWhiteLastSeenAt(NOW.minus(HEARTBEAT_TIMEOUT));
+        stored.setWhiteDisconnectedAt(NOW.minus(HEARTBEAT_TIMEOUT));
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.recordHeartbeat(GAME_ID, WHITE_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.ACTIVE),
+                () -> assertThat(game.getWhiteDisconnectedAt()).isNull(),
+                () -> assertThat(stored.getWhiteLastSeenAt()).isEqualTo(NOW),
+                () -> assertThat(stored.getBlackDisconnectedAt()).isNull());
+    }
+
+    @Test
+    void heartbeat_marks_opponent_silent_for_timeout_as_disconnected_since_last_seen_ok() {
+        // given
+        var stored = activeGame();
+        stored.setBlackLastSeenAt(NOW.minus(HEARTBEAT_TIMEOUT));
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.recordHeartbeat(GAME_ID, WHITE_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.ACTIVE),
+                () -> assertThat(game.getBlackDisconnectedAt()).isEqualTo(NOW.minus(HEARTBEAT_TIMEOUT)),
+                () -> assertThat(game.getWhiteDisconnectedAt()).isNull());
+    }
+
+    @Test
+    void heartbeat_by_player_returning_after_grace_forfeits_them_ok() {
+        // given
+        var stored = activeGame();
+        var whiteLastSeen = LATER.minus(RECONNECT_GRACE).minusSeconds(1);
+        stored.setWhiteLastSeenAt(whiteLastSeen);
+        stored.setBlackLastSeenAt(LATER);
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.recordHeartbeat(GAME_ID, WHITE_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(game.getStatus()).isEqualTo(OnlineGameStatus.COMPLETED),
+                () -> assertThat(game.getOutcome()).isEqualTo(GameResult.BLACK_WIN),
+                () -> assertThat(game.getTerminationReason()).isEqualTo(TerminationReason.DISCONNECT),
+                () -> assertThat(game.getEndedAt()).isEqualTo(whiteLastSeen.plus(RECONNECT_GRACE)),
+                () -> assertThat(game.getWhiteDisconnectedAt()).isEqualTo(whiteLastSeen),
+                () -> assertThat(stored.getWhiteLastSeenAt()).isEqualTo(whiteLastSeen));
+    }
+
+    @Test
+    void resolve_active_game_forfeits_player_at_exact_grace_deadline_even_without_clock_ok() {
+        // given
+        var stored = activeGame();
+        stored.setWhiteLastSeenAt(LATER);
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(stored.getStatus()).isEqualTo("COMPLETED"),
+                () -> assertThat(stored.getOutcome()).isEqualTo("WHITE_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("DISCONNECT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(LATER),
+                () -> assertThat(stored.getBlackDisconnectedAt()).isEqualTo(LATER.minus(RECONNECT_GRACE)),
+                () -> assertThat(stored.getWhiteRemainingMs()).isNull());
+    }
+
+    @Test
+    void resolve_active_game_just_before_grace_deadline_only_marks_disconnect_ok() {
+        // given
+        var stored = activeGame();
+        var blackLastSeen = LATER.minus(RECONNECT_GRACE).plusMillis(1);
+        stored.setWhiteLastSeenAt(LATER);
+        stored.setBlackLastSeenAt(blackLastSeen);
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        verify(onlineGameRepository).save(stored);
+        assertAll(
+                () -> assertThat(stored.getStatus()).isEqualTo("ACTIVE"),
+                () -> assertThat(stored.getOutcome()).isNull(),
+                () -> assertThat(stored.getBlackDisconnectedAt()).isEqualTo(blackLastSeen));
+    }
+
+    @Test
+    void resolve_active_game_with_both_players_away_forfeits_the_earlier_grace_ok() {
+        // given
+        var stored = activeGame();
+        var whiteLastSeen = LATER.minus(RECONNECT_GRACE).minusSeconds(10);
+        stored.setWhiteLastSeenAt(whiteLastSeen);
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE).minusSeconds(5));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("DISCONNECT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(whiteLastSeen.plus(RECONNECT_GRACE)));
+    }
+
+    @Test
+    void resolve_active_game_with_flag_fall_before_grace_expiry_records_timeout_ok() {
+        // given
+        var stored = movableGame();
+        stored.setTurnStartedAt(LATER.minusSeconds(200));
+        stored.setWhiteRemainingMs(100_000L);
+        stored.setWhiteLastSeenAt(LATER);
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE).minusSeconds(50));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(LATER.minusSeconds(100)),
+                () -> assertThat(stored.getWhiteRemainingMs()).isZero());
+    }
+
+    @Test
+    void resolve_active_game_with_grace_expiry_before_flag_fall_records_disconnect_and_stops_clock_ok() {
+        // given
+        var stored = movableGame();
+        stored.setTurnStartedAt(LATER.minusSeconds(200));
+        stored.setWhiteRemainingMs(150_000L);
+        stored.setWhiteLastSeenAt(LATER);
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE).minusSeconds(100));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("WHITE_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("DISCONNECT"),
+                () -> assertThat(stored.getEndedAt()).isEqualTo(LATER.minusSeconds(100)),
+                () -> assertThat(stored.getWhiteRemainingMs()).isEqualTo(50_000L),
+                () -> assertThat(stored.getBlackRemainingMs()).isEqualTo(FULL_CLOCK_MS));
+    }
+
+    @Test
+    void resolve_active_game_with_flag_fall_and_grace_expiry_at_same_instant_records_timeout_ok() {
+        // given
+        var stored = movableGame();
+        stored.setTurnStartedAt(LATER.minusSeconds(200));
+        stored.setWhiteRemainingMs(100_000L);
+        stored.setWhiteLastSeenAt(LATER);
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE).minusSeconds(100));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(stored.getOutcome()).isEqualTo("BLACK_WIN"),
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"));
+    }
+
+    @Test
+    void resolve_active_game_with_present_players_changes_nothing_ok() {
+        // given
+        var stored = activeGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        verify(onlineGameRepository, never()).save(any());
+        assertThat(stored.getStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void find_active_games_due_returns_forfeits_and_unmarked_silences_only_ok() {
+        // given
+        var forfeitDue = activeGame();
+        forfeitDue.setWhiteLastSeenAt(LATER);
+        forfeitDue.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE));
+        var newlySilent = activeGame();
+        newlySilent.setId(GAME_ID + 1);
+        newlySilent.setWhiteLastSeenAt(LATER);
+        newlySilent.setBlackLastSeenAt(LATER.minus(HEARTBEAT_TIMEOUT));
+        var alreadyMarked = activeGame();
+        alreadyMarked.setId(GAME_ID + 2);
+        alreadyMarked.setWhiteLastSeenAt(LATER);
+        alreadyMarked.setBlackLastSeenAt(LATER.minusSeconds(60));
+        alreadyMarked.setBlackDisconnectedAt(LATER.minusSeconds(60));
+        var present = movableGame();
+        present.setId(GAME_ID + 3);
+        present.setTurnStartedAt(LATER);
+        present.setWhiteLastSeenAt(LATER);
+        present.setBlackLastSeenAt(LATER);
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findActiveSweepCandidates("ACTIVE", LATER.minus(HEARTBEAT_TIMEOUT)))
+                .thenReturn(List.of(forfeitDue, newlySilent, alreadyMarked, present));
+
+        // when
+        var due = onlineGameService.findActiveGamesDue();
+
+        // then
+        assertThat(due).containsExactly(GAME_ID, GAME_ID + 1);
+    }
+
+    @Test
+    void make_move_after_opponent_grace_expired_is_rejected_and_changes_nothing_ko() {
+        // given
+        var stored = movableGame();
+        stored.setWhiteLastSeenAt(LATER.minusSeconds(1));
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when / then
+        assertThatThrownBy(() -> onlineGameService.makeMove(GAME_ID, WHITE_ID, submission(1, "e2e4")))
+                .isInstanceOf(AppException.class)
+                .extracting("errorMessage")
+                .isEqualTo(AppErrorMessage.DISCONNECT_FORFEIT_DUE);
+        verify(gameMoveRepository, never()).save(any());
+        verify(onlineGameRepository, never()).save(any());
+        assertAll(
+                () -> assertThat(stored.getStatus()).isEqualTo("ACTIVE"),
+                () -> assertThat(stored.getWhiteLastSeenAt()).isEqualTo(LATER.minusSeconds(1)));
+    }
+
+    @Test
+    void make_move_reconnects_mover_and_marks_silent_opponent_ok() {
+        // given
+        var stored = movableGame();
+        stored.setWhiteLastSeenAt(NOW.minusSeconds(40));
+        stored.setWhiteDisconnectedAt(NOW.minusSeconds(40));
+        stored.setBlackLastSeenAt(NOW.minus(HEARTBEAT_TIMEOUT));
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        when(gameMoveRepository.findByIdGameIdOrderByIdPlyAsc(GAME_ID)).thenReturn(List.of());
+
+        // when
+        var game = onlineGameService.makeMove(GAME_ID, WHITE_ID, submission(1, "e2e4"));
+
+        // then
+        assertAll(
+                () -> assertThat(game.getLastPly()).isEqualTo(1),
+                () -> assertThat(game.getWhiteDisconnectedAt()).isNull(),
+                () -> assertThat(game.getWhiteLastSeenAt()).isEqualTo(NOW),
+                () -> assertThat(game.getBlackDisconnectedAt()).isEqualTo(NOW.minus(HEARTBEAT_TIMEOUT)));
+    }
+
+    @Test
+    void resign_after_opponent_grace_expired_records_disconnect_instead_ok() {
+        // given
+        var stored = activeGame();
+        stored.setWhiteLastSeenAt(LATER.minusSeconds(1));
+        stored.setBlackLastSeenAt(LATER.minus(RECONNECT_GRACE));
+        when(clock.instant()).thenReturn(LATER);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        var game = onlineGameService.resign(GAME_ID, WHITE_ID);
+
+        // then
+        assertAll(
+                () -> assertThat(game.getOutcome()).isEqualTo(GameResult.WHITE_WIN),
+                () -> assertThat(game.getTerminationReason()).isEqualTo(TerminationReason.DISCONNECT));
+    }
+
+    @Test
+    void resign_in_rated_game_applies_rating_for_the_result_once_ok() {
+        // given
+        var stored = ratedGame();
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        var captor = ArgumentCaptor.forClass(RatedGameResult.class);
+
+        // when
+        onlineGameService.resign(GAME_ID, WHITE_ID);
+
+        // then
+        verify(ratingService).applyGameResult(captor.capture());
+        var result = captor.getValue();
+        assertAll(
+                () -> assertThat(result.getGameId()).isEqualTo(GAME_ID),
+                () -> assertThat(result.getModeCode()).isEqualTo("CLASSICAL"),
+                () -> assertThat(result.getWhiteAccountId()).isEqualTo(WHITE_ID),
+                () -> assertThat(result.getBlackAccountId()).isEqualTo(BLACK_ID),
+                () -> assertThat(result.getOutcome()).isEqualTo(GameResult.BLACK_WIN));
+    }
+
+    @Test
+    void resign_in_unrated_game_applies_no_rating_ok() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(movableGame()));
+
+        // when
+        onlineGameService.resign(GAME_ID, WHITE_ID);
+
+        // then
+        verify(ratingService, never()).applyGameResult(any());
+    }
+
+    @Test
+    void second_abandon_vote_in_rated_game_applies_draw_rating_ok() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(ratedGame()));
+        when(gameAbandonVoteRepository.findByIdGameId(GAME_ID)).thenReturn(List.of(vote(WHITE_ID)));
+        var captor = ArgumentCaptor.forClass(RatedGameResult.class);
+
+        // when
+        onlineGameService.voteToAbandon(GAME_ID, BLACK_ID);
+
+        // then
+        verify(ratingService).applyGameResult(captor.capture());
+        assertThat(captor.getValue().getOutcome()).isEqualTo(GameResult.DRAW);
+    }
+
+    @Test
+    void resolve_active_game_timeout_in_rated_game_applies_rating_ok() {
+        // given
+        var stored = ratedGame();
+        stored.setWhiteRemainingMs(1_000L);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+        var captor = ArgumentCaptor.forClass(RatedGameResult.class);
+
+        // when
+        onlineGameService.resolveActiveGame(GAME_ID);
+
+        // then
+        verify(ratingService).applyGameResult(captor.capture());
+        assertAll(
+                () -> assertThat(stored.getTerminationReason()).isEqualTo("TIMEOUT"),
+                () -> assertThat(captor.getValue().getOutcome()).isEqualTo(GameResult.BLACK_WIN));
+    }
+
+    @Test
+    void first_abandon_vote_in_rated_game_applies_no_rating_ok() {
+        // given
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(ratedGame()));
+
+        // when
+        onlineGameService.voteToAbandon(GAME_ID, WHITE_ID);
+
+        // then
+        verify(ratingService, never()).applyGameResult(any());
+    }
+
+    @Test
+    void cancel_rated_pending_game_applies_no_rating_ok() {
+        // given
+        var stored = pendingGame();
+        stored.setRated(true);
+        when(onlineGameRepository.findForUpdateById(GAME_ID)).thenReturn(Optional.of(stored));
+
+        // when
+        onlineGameService.cancelPendingGame(GAME_ID, WHITE_ID);
+
+        // then
+        verify(ratingService, never()).applyGameResult(any());
+    }
+
+    private GameAbandonVoteEntity vote(Long accountId) {
+        return GameAbandonVoteEntity.builder()
+                .withId(new GameAbandonVoteId(GAME_ID, accountId))
+                .withVotedAt(NOW.minusSeconds(1))
+                .build();
+    }
+
+    private OnlineGameEntity resignedByWhite() {
+        var game = movableGame();
+        game.setStatus("COMPLETED");
+        game.setEndedAt(NOW.minusSeconds(1));
+        game.setOutcome("BLACK_WIN");
+        game.setTerminationReason("RESIGNATION");
+
+        return game;
+    }
+
     private MoveSubmission submission(int ply, String move) {
         return MoveSubmission.builder().withPly(ply).withMove(move).build();
     }
@@ -939,6 +1611,14 @@ class OnlineGameServiceImplTest {
         game.setWhiteRemainingMs(FULL_CLOCK_MS);
         game.setBlackRemainingMs(FULL_CLOCK_MS);
         game.setTurnStartedAt(TURN_STARTED_AT);
+
+        return game;
+    }
+
+    private OnlineGameEntity ratedGame() {
+        var game = movableGame();
+        game.setRated(true);
+        game.setModeCode("CLASSICAL");
 
         return game;
     }
